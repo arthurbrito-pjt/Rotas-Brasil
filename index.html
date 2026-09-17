@@ -19,6 +19,11 @@
   <header id="topbar">
     <h1>Mapa do Brasil</h1>
     <div id="modo-indicador" class="chip oculto">Modo: <span id="modo-texto"></span></div>
+    <div id="filtro-estado-container">
+      <select id="filtro-estado">
+        <option value="">Visão geral (Brasil)</option>
+      </select>
+    </div>
     <div id="busca-container">
       <input type="text" id="busca-input" placeholder="Buscar município..." autocomplete="off" />
       <div id="busca-resultados" class="oculto"></div>
@@ -80,12 +85,14 @@
           Rótulos das mesorregiões
         </label>
         <p class="dica">Passe o mouse sobre o mapa para ver o nome do estado e do município.</p>
+        <p class="dica">Use o seletor de estado no topo para focar em um único estado (o restante do mapa fica oculto) e escolha "Visão geral" para voltar a ver o Brasil todo.</p>
       </section>
 
       <!-- Aba: Cores/Grupos -->
       <section class="aba-conteudo oculto" id="aba-cores">
         <h2>Seleção atual</h2>
         <div id="selecao-info">Nenhum município selecionado.</div>
+        <p class="dica">Ative "Multi-seleção" para clicar em vários municípios sem perder a seleção anterior. Em qualquer momento, segure Shift, pressione o botão do mouse sobre um município e arraste o cursor: cada município tocado pelo cursor é adicionado à seleção.</p>
         <div class="linha-cor">
           <label for="cor-individual">Cor:</label>
           <input type="color" id="cor-individual" value="#4f9dde" />
@@ -100,6 +107,7 @@
           <input type="color" id="grupo-cor" value="#f2994a" />
         </div>
         <button id="btn-criar-grupo">Criar grupo com selecionados</button>
+        <button id="btn-remover-grupo" class="secundario">Remover selecionados de qualquer grupo</button>
         <ul id="lista-grupos"></ul>
       </section>
 

@@ -33,10 +33,15 @@ let modoAtual = 'selecionar';       // 'selecionar' | 'rota' | 'marcador' | 'tex
 let multiSelecaoAtiva = false;
 let pontosRotaAtual = [];
 let linhaRotaTemp = null;
+let estadoFiltroAtual = null;       // código do estado (UF) em foco, ou null = visão geral
 
 // Índices de dados carregados
 const municipiosPorCodigo = new Map(); // codigo -> { feature, layer, nome, uf_sigla }
 let listaBuscaMunicipios = [];
+const boundsPorUF = new Map();         // código da UF -> L.LatLngBounds
+let boundsBrasil = null;
+let camadaEstadosGeo = null;
+let camadaMesorregioesGeo = null;
 
 let contadorId = 1;
 function proximoId() { return 'id' + (contadorId++) + '_' + Date.now().toString(36); }
@@ -104,12 +109,17 @@ const mapa = L.map('mapa', {
   zoomControl: true,
   attributionControl: false,
   preferCanvas: true,
+  boxZoom: false, // Shift+arrastar é usado para "pintar" a seleção de municípios, não para zoom
 });
 
 // Renderer canvas único e compartilhado por todas as camadas vetoriais.
 // Isso garante boa performance com milhares de polígonos e permite
 // exportar a imagem final combinando um único elemento <canvas>.
 const rendererCompartilhado = L.canvas({ padding: 0.4 });
+
+// Recalcula o tamanho do mapa quando a janela é redimensionada (evita
+// dessincronização entre a posição do mouse e as coordenadas do mapa)
+window.addEventListener('resize', () => mapa.invalidateSize());
 
 const camadaEstados = L.layerGroup();
 const camadaMesorregioes = L.layerGroup();
@@ -150,19 +160,51 @@ function corDoMunicipio(codigo) {
   return null;
 }
 
+// Município/mesorregião pertence a um estado diferente do filtrado atualmente
+function foraDoFiltro(feature) {
+  return !!estadoFiltroAtual && feature.properties.uf_codigo !== estadoFiltroAtual;
+}
+
+// O próprio estado (UF) não é o estado filtrado atualmente
+function estadoForaDoFiltro(feature) {
+  return !!estadoFiltroAtual && feature.properties.codigo !== estadoFiltroAtual;
+}
+
 function estiloMunicipio(feature) {
   const codigo = feature.properties.codigo;
   const cor = corDoMunicipio(codigo);
   const selecionado = selecionados.has(codigo);
+  const oculto = foraDoFiltro(feature);
   return {
     renderer: rendererCompartilhado,
     fill: true,
     fillColor: cor || '#ffffff',
-    fillOpacity: cor ? 0.72 : 0,
+    fillOpacity: oculto ? 0 : (cor ? 0.72 : 0),
     color: selecionado ? CORES.municipioContornoSelecionado : CORES.municipioContorno,
     weight: selecionado ? 2.5 : 0.8,
     dashArray: selecionado ? '5,3' : null,
-    opacity: 1,
+    opacity: oculto ? 0 : 1,
+  };
+}
+
+function estiloEstado(feature) {
+  return {
+    renderer: rendererCompartilhado,
+    fill: false,
+    color: CORES.estadoContorno,
+    weight: 1.6,
+    opacity: estadoForaDoFiltro(feature) ? 0 : 1,
+  };
+}
+
+function estiloMesorregiao(feature) {
+  return {
+    renderer: rendererCompartilhado,
+    fill: false,
+    color: CORES.mesorregiaoContorno,
+    weight: 1.4,
+    dashArray: '7,5',
+    opacity: foraDoFiltro(feature) ? 0 : 0.85,
   };
 }
 
@@ -201,8 +243,26 @@ async function carregarCamadas() {
 
       layer.on('click', (e) => {
         if (modoAtual === 'selecionar') {
+          if (foraDoFiltro(feature)) return; // fora do estado filtrado: ignora o clique
           L.DomEvent.stopPropagation(e);
-          alternarSelecaoMunicipio(p.codigo);
+          if (e.originalEvent && e.originalEvent.shiftKey) {
+            selecionados.add(p.codigo);
+            repintarMunicipio(p.codigo);
+            atualizarPainelSelecao();
+          } else {
+            alternarSelecaoMunicipio(p.codigo);
+          }
+        }
+      });
+
+      layer.on('mouseover', () => {
+        if (foraDoFiltro(feature)) { layer.closeTooltip(); return; }
+        // "Pintar" a seleção: com Shift pressionado e o botão do mouse
+        // apertado, cada município sob o cursor é adicionado à seleção.
+        if (modoAtual === 'selecionar' && arrastandoComShiftAtivo) {
+          selecionados.add(p.codigo);
+          repintarMunicipio(p.codigo);
+          atualizarPainelSelecao();
         }
       });
     },
@@ -216,17 +276,10 @@ async function carregarCamadas() {
   }));
 
   // --- Mesorregiões (contorno laranja tracejado, apenas visual) -----------
-  L.geoJSON(geoMesorregioes, {
+  camadaMesorregioesGeo = L.geoJSON(geoMesorregioes, {
     renderer: rendererCompartilhado,
     interactive: false,
-    style: {
-      renderer: rendererCompartilhado,
-      fill: false,
-      color: CORES.mesorregiaoContorno,
-      weight: 1.4,
-      dashArray: '7,5',
-      opacity: 0.85,
-    },
+    style: estiloMesorregiao,
   }).addTo(camadaMesorregioes);
 
   geoMesorregioes.features.forEach((f) => {
@@ -239,17 +292,27 @@ async function carregarCamadas() {
   });
 
   // --- Estados (contorno preto, camada mais visível, apenas visual) -------
-  L.geoJSON(geoEstados, {
+  camadaEstadosGeo = L.geoJSON(geoEstados, {
     renderer: rendererCompartilhado,
     interactive: false,
-    style: {
-      renderer: rendererCompartilhado,
-      fill: false,
-      color: CORES.estadoContorno,
-      weight: 1.6,
-      opacity: 1,
+    style: estiloEstado,
+    onEachFeature: (feature, layer) => {
+      boundsPorUF.set(feature.properties.codigo, layer.getBounds());
     },
   }).addTo(camadaEstados);
+  boundsBrasil = camadaEstadosGeo.getBounds();
+
+  // Preenche o seletor "Filtrar por estado" (ordenado por nome do estado)
+  const selectEstado = document.getElementById('filtro-estado');
+  geoEstados.features
+    .slice()
+    .sort((a, b) => a.properties.nome.localeCompare(b.properties.nome, 'pt-BR'))
+    .forEach((f) => {
+      const opt = document.createElement('option');
+      opt.value = f.properties.codigo;
+      opt.textContent = `${f.properties.nome} (${f.properties.sigla})`;
+      selectEstado.appendChild(opt);
+    });
 
   geoEstados.features.forEach((f) => {
     const layerTemp = L.geoJSON(f);
@@ -349,6 +412,29 @@ async function excluirGrupo(idGrupo) {
   salvarProjeto();
 }
 
+// Adiciona os municípios atualmente selecionados a um grupo já existente
+// (permite ir expandindo um grupo aos poucos, em vez de recriá-lo).
+async function adicionarSelecionadosAoGrupo(idGrupo) {
+  if (selecionados.size === 0) { await modalAlerta('Selecione ao menos um município para adicionar ao grupo.'); return; }
+  selecionados.forEach((cod) => {
+    coresIndividuais.delete(cod); // grupo tem precedência sobre cor individual
+    municipioParaGrupo.set(cod, idGrupo);
+  });
+  renderizarListaGrupos();
+  repintarTodosMunicipios();
+  salvarProjeto();
+}
+
+// Remove os municípios selecionados de qualquer grupo ao qual pertençam,
+// sem excluir o grupo em si.
+async function removerSelecionadosDosGrupos() {
+  if (selecionados.size === 0) { await modalAlerta('Selecione ao menos um município.'); return; }
+  selecionados.forEach((cod) => municipioParaGrupo.delete(cod));
+  renderizarListaGrupos();
+  repintarTodosMunicipios();
+  salvarProjeto();
+}
+
 function selecionarMunicipiosDoGrupo(idGrupo) {
   selecionados.clear();
   municipioParaGrupo.forEach((v, k) => { if (v === idGrupo) selecionados.add(k); });
@@ -383,9 +469,11 @@ function renderizarListaGrupos() {
     li.innerHTML = `
       <span class="amostra-cor" style="background:${g.cor}"></span>
       <span class="item-nome" title="${g.nome}">${g.nome} (${qtd})</span>
+      <button data-acao="adicionar" title="Adicionar selecionados a este grupo">➕</button>
       <button data-acao="ir" title="Selecionar e centralizar">🎯</button>
       <button data-acao="excluir" title="Excluir grupo">🗑️</button>
     `;
+    li.querySelector('[data-acao="adicionar"]').onclick = () => adicionarSelecionadosAoGrupo(g.id);
     li.querySelector('[data-acao="ir"]').onclick = () => selecionarMunicipiosDoGrupo(g.id);
     li.querySelector('[data-acao="excluir"]').onclick = () => excluirGrupo(g.id);
     ul.appendChild(li);
@@ -892,6 +980,44 @@ function aplicarVisibilidadeCamadas() {
   .forEach((id) => document.getElementById(id).addEventListener('change', () => { aplicarVisibilidadeCamadas(); salvarProjeto(); }));
 
 // ---------------------------------------------------------------------------
+// Filtro por estado (visão geral x foco em um único estado)
+// ---------------------------------------------------------------------------
+
+document.getElementById('filtro-estado').addEventListener('change', (e) => {
+  estadoFiltroAtual = e.target.value || null;
+  if (estadoFiltroAtual && boundsPorUF.has(estadoFiltroAtual)) {
+    mapa.fitBounds(boundsPorUF.get(estadoFiltroAtual), { padding: [20, 20] });
+  } else if (boundsBrasil) {
+    mapa.fitBounds(boundsBrasil, { padding: [10, 10] });
+  }
+  repintarTodosMunicipios();
+  camadaEstadosGeo.setStyle(estiloEstado);
+  camadaMesorregioesGeo.setStyle(estiloMesorregiao);
+});
+
+// ---------------------------------------------------------------------------
+// Multi-seleção "pintando" com Shift + cursor do mouse
+// ---------------------------------------------------------------------------
+// Segurando Shift e passando o cursor por cima dos municípios (com o botão
+// do mouse pressionado), cada município que o cursor efetivamente tocar é
+// adicionado à seleção — diferente de uma seleção por área/retângulo, que
+// pegaria também vizinhos que não deveriam entrar. O arraste normal do
+// mapa (sem Shift) continua funcionando para navegar, pois o Leaflet
+// ignora o início do arraste quando a tecla Shift está pressionada.
+
+let arrastandoComShiftAtivo = false;
+
+mapa.getContainer().addEventListener('mousedown', (e) => {
+  if (e.shiftKey && modoAtual === 'selecionar' && e.button === 0) {
+    arrastandoComShiftAtivo = true;
+    e.preventDefault(); // evita seleção de texto na página durante o arraste
+  }
+});
+
+document.addEventListener('mouseup', () => { arrastandoComShiftAtivo = false; });
+document.addEventListener('keyup', (e) => { if (e.key === 'Shift') arrastandoComShiftAtivo = false; });
+
+// ---------------------------------------------------------------------------
 // Ligação da interface (abas, botões, ferramentas)
 // ---------------------------------------------------------------------------
 
@@ -925,6 +1051,7 @@ document.getElementById('btn-multi').addEventListener('click', (e) => {
 document.getElementById('btn-aplicar-cor').addEventListener('click', aplicarCorSelecionados);
 document.getElementById('btn-remover-cor').addEventListener('click', removerCorSelecionados);
 document.getElementById('btn-criar-grupo').addEventListener('click', criarGrupoComSelecionados);
+document.getElementById('btn-remover-grupo').addEventListener('click', removerSelecionadosDosGrupos);
 
 document.getElementById('btn-exportar-json').addEventListener('click', exportarJSON);
 document.getElementById('btn-exportar-png').addEventListener('click', exportarPNG);

@@ -58,10 +58,22 @@ html, body {
   border-radius: 12px;
 }
 
+#filtro-estado-container {
+  margin-left: auto;
+}
+
+#filtro-estado {
+  padding: 7px 10px;
+  border: 1px solid var(--cor-borda);
+  border-radius: 6px;
+  font-size: 13px;
+  background: #fff;
+  max-width: 220px;
+}
+
 #busca-container {
   position: relative;
-  margin-left: auto;
-  width: 280px;
+  width: 240px;
 }
 
 #busca-input {
@@ -459,4 +471,17 @@ ul#lista-grupos, ul#lista-rotas, ul#lista-marcadores, ul#lista-textos {
 @media (max-width: 900px) {
   #painel { flex-basis: 260px; max-width: 260px; }
   #busca-container { width: 180px; }
+}
+
+@media (max-width: 680px) {
+  #topbar {
+    height: auto;
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    row-gap: 6px;
+  }
+  #topbar h1 { font-size: 14px; }
+  #modo-indicador { order: 4; flex-basis: 100%; }
+  #filtro-estado-container { margin-left: 0; }
+  #busca-container { width: 160px; }
 }
