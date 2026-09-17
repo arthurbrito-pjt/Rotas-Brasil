@@ -209,20 +209,52 @@ function estiloMunicipio(feature) {
     };
   }
 
-  const desenharBorda = selecionado || exibirContornoMunicipios;
+  // 1. Se o município estiver selecionado: exibe contorno tracejado preto de seleção
+  if (selecionado) {
+    return {
+      renderer: rendererCompartilhado,
+      stroke: true,
+      color: CORES.municipioContornoSelecionado,
+      weight: 2.5,
+      dashArray: '5,3',
+      opacity: 1,
+      fill: temCor,
+      fillColor: cor || '#ffffff',
+      fillOpacity: 1,
+    };
+  }
 
+  // 2. Se a camada "Municípios (contorno cinza claro)" estiver marcada: exibe as linhas cinzas de contorno
+  if (exibirContornoMunicipios) {
+    return {
+      renderer: rendererCompartilhado,
+      stroke: true,
+      color: CORES.municipioContorno,
+      weight: 0.8,
+      dashArray: null,
+      opacity: 1,
+      fill: temCor,
+      fillColor: cor || '#ffffff',
+      fillOpacity: 1,
+    };
+  }
+
+  // 3. Se a camada de contornos estiver DESMARCADA:
+  // Renderiza a cor 100% sólida e borda na MESMA cor com opacity 1.0 (weight: 1.5).
+  // Isso sela 100% as frestas de anti-aliasing do canvas, fazendo desaparecer
+  // qualquer linha, traço ou fenda branca entre os municípios, ficando tudo liso e limpo!
   return {
     renderer: rendererCompartilhado,
-    stroke: desenharBorda,
-    color: selecionado
-      ? CORES.municipioContornoSelecionado
-      : CORES.municipioContorno,
-    weight: selecionado ? 2.5 : (exibirContornoMunicipios ? 0.8 : 0),
-    dashArray: selecionado ? '5,3' : null,
-    opacity: selecionado ? 1 : (exibirContornoMunicipios ? 1 : 0),
-    fill: temCor,
-    fillColor: cor || '#ffffff',
-    fillOpacity: temCor ? 0.72 : 0,
+    stroke: true,
+    color: cor,
+    weight: 1.5,
+    dashArray: null,
+    opacity: 1,
+    fill: true,
+    fillColor: cor,
+    fillOpacity: 1,
+    lineJoin: 'round',
+    lineCap: 'round',
   };
 }
 
@@ -306,6 +338,24 @@ async function carregarCamadas() {
       layer.on('click', (e) => {
         if (foraDoFiltro(feature)) return; // fora do estado filtrado: ignora o clique
         L.DomEvent.stopPropagation(e);
+
+        // Modo Inserir Texto Livre
+        if (modoAtual === 'texto') {
+          criarTextoInterativo(e.latlng);
+          return;
+        }
+
+        // Modo Inserir Marcador
+        if (modoAtual === 'marcador') {
+          criarMarcadorInterativo(e.latlng);
+          return;
+        }
+
+        // Modo Desenhar Rota
+        if (modoAtual === 'rota') {
+          adicionarPontoRota(e.latlng);
+          return;
+        }
 
         // Modo Conta-Gotas (Pipeta)
         if (modoAtual === 'pipeta') {
@@ -1115,10 +1165,14 @@ function iconeMarcador() {
 
 async function criarMarcadorInterativo(latlng) {
   const titulo = await modalPrompt('Título do marcador:');
-  if (titulo === null) return;
+  if (titulo === null) {
+    definirModo('selecionar');
+    return;
+  }
   const texto = (await modalPrompt('Observação (opcional):')) || '';
   adicionarMarcador({ id: proximoId(), lat: latlng.lat, lng: latlng.lng, titulo: titulo || 'Marcador', texto });
   salvarProjeto();
+  definirModo('selecionar');
 }
 
 function adicionarMarcador(dados) {
@@ -1136,6 +1190,7 @@ function adicionarMarcador(dados) {
   dados.layer = layer;
   marcadores.push(dados);
   renderizarListaMarcadores();
+  atualizarVisibilidadeItensUsuario();
 }
 
 async function editarMarcador(id) {
@@ -1188,9 +1243,13 @@ function renderizarListaMarcadores() {
 
 async function criarTextoInterativo(latlng) {
   const texto = await modalPrompt('Digite o texto/observação:');
-  if (!texto) return;
+  if (!texto) {
+    definirModo('selecionar');
+    return;
+  }
   adicionarTexto({ id: proximoId(), lat: latlng.lat, lng: latlng.lng, texto });
   salvarProjeto();
+  definirModo('selecionar');
 }
 
 function adicionarTexto(dados) {
@@ -1207,6 +1266,7 @@ function adicionarTexto(dados) {
   dados.layer = layer;
   textos.push(dados);
   renderizarListaTextos();
+  atualizarVisibilidadeItensUsuario();
 }
 
 async function editarTexto(id) {
@@ -1532,6 +1592,12 @@ function aplicarEstadoRemoto(remoto) {
   paraRepintar.forEach((cod) => repintarMunicipio(cod));
   atualizarPainelSelecao();
   atualizarPaletaCoresUsadas();
+
+  try {
+    localStorage.setItem(CHAVE_LOCALSTORAGE, JSON.stringify(estadoParaObjeto()));
+  } catch (erro) {
+    console.warn('Não foi possível atualizar o localStorage após sincronização:', erro);
+  }
 }
 
 function carregarProjetoSalvo() {

@@ -22,8 +22,7 @@ import {
   onValue,
   onDisconnect,
   serverTimestamp,
-  off,
-  runTransaction
+  off
 } from './firebase-config.js';
 
 // ID de sessão único por aba/janela aberta (evita conflitos mesmo testando na mesma máquina ou conta)
@@ -482,10 +481,25 @@ function iniciarSincronizacaoProjeto() {
       const payload = snap.val();
       if (payload && payload.dados && window.AppMapa?.aplicarEstadoRemoto) {
         console.log('Projeto carregado da nuvem:', payload.atualizadoPor?.nome);
-        ultimoEstadoSincronizado = payload.dados;
-        ultimoHashSincronizado = JSON.stringify(payload.dados);
-        window.AppMapa.aplicarEstadoRemoto(payload.dados);
+        const localAgora = window.AppMapa.estadoParaObjeto ? window.AppMapa.estadoParaObjeto() : null;
+        let dadosParaAplicar = payload.dados;
+        const temDadosLocais = localAgora && (
+          Object.keys(localAgora.coresIndividuais || {}).length > 0 ||
+          (localAgora.grupos || []).length > 0 ||
+          (localAgora.rotas || []).length > 0 ||
+          (localAgora.marcadores || []).length > 0 ||
+          (localAgora.textos || []).length > 0
+        );
+        if (temDadosLocais) {
+          dadosParaAplicar = mesclarEstados(payload.dados, localAgora, null);
+        }
+        ultimoEstadoSincronizado = dadosParaAplicar;
+        ultimoHashSincronizado = JSON.stringify(dadosParaAplicar);
+        window.AppMapa.aplicarEstadoRemoto(dadosParaAplicar);
         atualizarStatusUI('online', 'Sincronizado');
+        if (JSON.stringify(dadosParaAplicar) !== JSON.stringify(payload.dados)) {
+          notificarAlteracaoLocal();
+        }
       }
     } else if (window.AppMapa?.estadoParaObjeto) {
       executarSalvamentoRemoto();
@@ -567,36 +581,24 @@ async function executarSalvamentoRemoto() {
   const projetoRef = ref(db, 'projeto/compartilhado');
 
   try {
-    const resultado = await runTransaction(projetoRef, (atual) => {
-      let dadosFinais = dadosLocais;
-      if (atual && atual.dados) {
-        dadosFinais = mesclarEstados(atual.dados, dadosLocais, ultimoEstadoSincronizado);
-      }
-      return {
-        dados: dadosFinais,
-        atualizadoPor: {
-          sessionId,
-          uid: usuarioAtual.uid,
-          nome: usuarioAtual.displayName || 'Usuário',
-          email: usuarioAtual.email || ''
-        },
-        atualizadoEm: serverTimestamp()
-      };
-    });
+    const payload = {
+      dados: dadosLocais,
+      atualizadoPor: {
+        sessionId,
+        uid: usuarioAtual.uid,
+        nome: usuarioAtual.displayName || 'Usuário',
+        email: usuarioAtual.email || ''
+      },
+      atualizadoEm: Date.now()
+    };
 
-    if (resultado && resultado.committed) {
-      const snapVal = resultado.snapshot.val();
-      if (snapVal && snapVal.dados) {
-        ultimoEstadoSincronizado = snapVal.dados;
-        ultimoHashSincronizado = JSON.stringify(snapVal.dados);
-        if (window.AppMapa?.aplicarEstadoRemoto) {
-          window.AppMapa.aplicarEstadoRemoto(snapVal.dados);
-        }
-      }
-      atualizarStatusUI('online', 'Sincronizado');
-    }
+    await set(projetoRef, payload);
+
+    ultimoEstadoSincronizado = dadosLocais;
+    ultimoHashSincronizado = hashLocal;
+    atualizarStatusUI('online', 'Sincronizado');
   } catch (err) {
-    console.error('Erro na transação de salvamento no Firebase:', err);
+    console.error('Erro ao salvar no Firebase:', err);
     atualizarStatusUI('erro', 'Erro ao sincronizar');
   } finally {
     salvandoNoFirebase = false;
