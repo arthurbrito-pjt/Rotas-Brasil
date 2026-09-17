@@ -803,7 +803,7 @@ function salvarProjeto() {
   }
 }
 
-function limparCamadasDinamicas() {
+function limparCamadasDinamicas(limparSelecao = false) {
   rotas.forEach((r) => camadaRotas.removeLayer(r.layer));
   marcadores.forEach((m) => camadaMarcadores.removeLayer(m.layer));
   textos.forEach((t) => camadaTextos.removeLayer(t.layer));
@@ -811,11 +811,13 @@ function limparCamadasDinamicas() {
   coresIndividuais.clear();
   municipioParaGrupo.clear();
   grupos = [];
-  selecionados.clear();
+  if (limparSelecao) {
+    selecionados.clear();
+  }
 }
 
-function aplicarEstadoDoObjeto(obj) {
-  limparCamadasDinamicas();
+function aplicarEstadoDoObjeto(obj, { limparSelecao = false } = {}) {
+  limparCamadasDinamicas(limparSelecao);
 
   coresIndividuais = new Map(Object.entries(obj.coresIndividuais || {}));
   municipioParaGrupo = new Map(Object.entries(obj.municipioParaGrupo || {}));
@@ -886,7 +888,7 @@ function importarJSON(arquivo) {
 
 async function resetarTudo() {
   if (!(await modalConfirm('Isso apagará todas as cores, grupos, rotas, marcadores e textos. Continuar?'))) return;
-  limparCamadasDinamicas();
+  limparCamadasDinamicas(true);
   renderizarListaGrupos();
   renderizarListaRotas();
   renderizarListaMarcadores();
@@ -894,6 +896,7 @@ async function resetarTudo() {
   repintarTodosMunicipios();
   atualizarPainelSelecao();
   localStorage.removeItem(CHAVE_LOCALSTORAGE);
+  salvarProjeto();
 }
 
 // ---------------------------------------------------------------------------

@@ -2,9 +2,10 @@
 // Colaboração em Tempo Real com Firebase (Realtime Database & Auth)
 // Suporta:
 // - Login / Logout com Google
-// - Presença online de múltiplos usuários simultâneos
-// - Cursores ao vivo no mapa Leaflet (com coordenadas lat/lng reais)
+// - Presença online de múltiplos usuários (sem recarregar avatares)
+// - Cursores ao vivo no mapa Leaflet (com coordenadas lat/lng reais e zero piscamento)
 // - Sincronização em tempo real de cores, grupos, rotas, marcadores e textos
+// - Preservação estrita da seleção individual de cada usuário
 // ============================================================================
 
 import {
@@ -53,10 +54,14 @@ let usuarioAtual = null;
 let corUsuarioAtual = null;
 let camadaCursores = null;
 
-// Mapa de cursores ativos de outros colaboradores: uid -> { marker, dados }
+// Mapa de cursores ativos no Leaflet: uid -> { marker, el, dados }
 const cursoresOutros = new Map();
-// Mapa de presenças ativas: uid -> dados
-const presencasAtivas = new Map();
+// Informações estáticas de usuários online: uid -> { uid, nome, email, foto, cor }
+const usuariosOnline = new Map();
+// Última posição conhecida do cursor: uid -> { lat, lng }
+const ultimasPosicoes = new Map();
+// Elementos DOM dos avatares no topbar: uid -> HTMLElement
+const elementosAvatares = new Map();
 
 let debouncersSalvar = null;
 let ultimoHashEstadoLocal = null;
@@ -91,7 +96,6 @@ function garantirCamadaCursores() {
   return true;
 }
 
-// Criação do ícone SVG personalizado do cursor
 function criarIconeCursor(peer) {
   const cor = peer.cor || '#2563eb';
   const primeiroNome = (peer.nome || 'Colega').trim().split(' ')[0];
@@ -115,25 +119,25 @@ function criarIconeCursor(peer) {
 // Rastreamento de Mouse e Envio de Posição
 // ---------------------------------------------------------------------------
 let ultimoEnvioMouse = 0;
-let timeoutEnvioMouse = null;
-let posicaoPendente = null;
+let rafMouse = null;
+let ultimaPosicaoEnviada = null;
 
 function enviarPosicaoCursor(lat, lng) {
   if (!usuarioAtual || !conectadoAoFirebase) return;
-  const cursorRef = ref(db, `presencas/${usuarioAtual.uid}`);
+
+  // Evita envios repetidos de posições idênticas
+  const chavePos = lat !== null && lng !== null && lat !== undefined && lng !== undefined
+    ? `${lat.toFixed(5)},${lng.toFixed(5)}`
+    : 'null';
+  if (ultimaPosicaoEnviada === chavePos) return;
+  ultimaPosicaoEnviada = chavePos;
+
+  const cursorRef = ref(db, `cursores/${usuarioAtual.uid}`);
   set(cursorRef, {
-    uid: usuarioAtual.uid,
-    nome: usuarioAtual.displayName || 'Usuário',
-    email: usuarioAtual.email || '',
-    foto: usuarioAtual.photoURL || '',
-    cor: corUsuarioAtual,
     lat: lat !== null && lat !== undefined ? Number(lat.toFixed(5)) : null,
     lng: lng !== null && lng !== undefined ? Number(lng.toFixed(5)) : null,
-    ativo: true,
-    atualizadoEm: Date.now()
-  }).catch((err) => {
-    console.warn('Erro ao atualizar posição do cursor:', err);
-  });
+    t: Date.now()
+  }).catch(() => {});
 }
 
 function configurarEventosMapa() {
@@ -142,28 +146,29 @@ function configurarEventosMapa() {
   if (mapa._eventosColabConfigurados) return;
   mapa._eventosColabConfigurados = true;
 
-  mapa.on('mousemove', (e) => {
-    if (!usuarioAtual) return;
-    const agora = performance.now();
-    posicaoPendente = e.latlng;
+  const container = mapa.getContainer();
 
-    // Throttle de ~60ms para movimentação super suave sem sobrecarregar a rede
-    if (agora - ultimoEnvioMouse > 60) {
-      enviarPosicaoCursor(posicaoPendente.lat, posicaoPendente.lng);
-      ultimoEnvioMouse = agora;
-    } else if (!timeoutEnvioMouse) {
-      timeoutEnvioMouse = setTimeout(() => {
-        timeoutEnvioMouse = null;
-        if (posicaoPendente) {
-          enviarPosicaoCursor(posicaoPendente.lat, posicaoPendente.lng);
-          ultimoEnvioMouse = performance.now();
+  // Movimento do mouse sobre o mapa com throttle de 50ms usando requestAnimationFrame
+  mapa.on('mousemove', (e) => {
+    if (!usuarioAtual || !conectadoAoFirebase) return;
+    const lat = e.latlng.lat;
+    const lng = e.latlng.lng;
+
+    if (!rafMouse) {
+      rafMouse = requestAnimationFrame(() => {
+        rafMouse = null;
+        const agora = performance.now();
+        if (agora - ultimoEnvioMouse > 50) {
+          enviarPosicaoCursor(lat, lng);
+          ultimoEnvioMouse = agora;
         }
-      }, 60);
+      });
     }
   });
 
-  mapa.on('mouseout', () => {
-    if (!usuarioAtual) return;
+  // mouseleave no container real do mapa NÃO dispara ao passar sobre municípios ou marcadores!
+  container.addEventListener('mouseleave', () => {
+    if (!usuarioAtual || !conectadoAoFirebase) return;
     enviarPosicaoCursor(null, null);
   });
 }
@@ -176,101 +181,142 @@ window.addEventListener('appMapaPronto', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Atualização dos Cursores de Outros Usuários
+// Atualização dos Cursores Remotos (Sem Piscar!)
 // ---------------------------------------------------------------------------
-function atualizarCursoresRemotos(presencas) {
+function processarAtualizacaoCursor(uid, coord) {
   if (!garantirCamadaCursores()) return;
+  if (uid === usuarioAtual?.uid) return;
 
-  const uidsPresentes = new Set();
+  const temCoord = coord && typeof coord.lat === 'number' && typeof coord.lng === 'number';
 
-  Object.entries(presencas || {}).forEach(([uid, peer]) => {
-    if (uid === usuarioAtual?.uid) return; // Ignora a si mesmo
-    if (!peer || !peer.ativo) return;
+  if (temCoord) {
+    ultimasPosicoes.set(uid, { lat: coord.lat, lng: coord.lng });
+  }
 
-    uidsPresentes.add(uid);
+  let item = cursoresOutros.get(uid);
 
-    const temCoordenadas = typeof peer.lat === 'number' && typeof peer.lng === 'number';
-
-    if (cursoresOutros.has(uid)) {
-      const item = cursoresOutros.get(uid);
-      if (temCoordenadas) {
-        item.marker.setLatLng([peer.lat, peer.lng]);
-        item.dados = peer;
-      } else {
-        camadaCursores.removeLayer(item.marker);
-        cursoresOutros.delete(uid);
+  if (temCoord) {
+    if (item) {
+      item.marker.setLatLng([coord.lat, coord.lng]);
+      if (item.el) {
+        item.el.classList.remove('cursor-oculto');
       }
-    } else if (temCoordenadas) {
-      const marker = L.marker([peer.lat, peer.lng], {
+    } else {
+      const peer = usuariosOnline.get(uid) || { uid, nome: 'Colega', cor: extrairCorUsuario(uid) };
+      const marker = L.marker([coord.lat, coord.lng], {
         icon: criarIconeCursor(peer),
         interactive: false,
         zIndexOffset: 1200
       }).addTo(camadaCursores);
 
-      cursoresOutros.set(uid, { marker, dados: peer });
+      const el = marker.getElement();
+      cursoresOutros.set(uid, { marker, el, dados: peer });
     }
-  });
-
-  // Remove cursores de quem saiu
-  cursoresOutros.forEach((item, uid) => {
-    if (!uidsPresentes.has(uid)) {
-      camadaCursores.removeLayer(item.marker);
-      cursoresOutros.delete(uid);
+  } else if (item) {
+    // Quando sai do mapa, apenas oculta suavemente via CSS em vez de destruir e recriar o elemento!
+    if (item.el) {
+      item.el.classList.add('cursor-oculto');
     }
-  });
-}
-
-// ---------------------------------------------------------------------------
-// Renderização da Barra de Presença (Quem está online)
-// ---------------------------------------------------------------------------
-function renderizarListaColaboradores(presencas) {
-  if (!listaColaboradores) return;
-  listaColaboradores.innerHTML = '';
-
-  const lista = Object.values(presencas || {}).filter((p) => p && p.uid);
-
-  if (lista.length <= 1) {
-    listaColaboradores.innerHTML = '<span class="dica-online">Apenas você na sala</span>';
-    return;
   }
+}
 
-  lista.forEach((peer) => {
-    const isVoce = peer.uid === usuarioAtual?.uid;
-    const container = document.createElement('div');
-    container.className = `avatar-colaborador ${isVoce ? 'avatar-voce' : ''}`;
-    container.title = `${peer.nome || 'Colega'} (${peer.email || ''})${isVoce ? ' — Você' : ' — Clique para ir até ele'}`;
-    container.style.borderColor = peer.cor || '#2563eb';
-
-    if (peer.foto) {
-      container.innerHTML = `<img src="${peer.foto}" alt="${peer.nome}" referrerpolicy="no-referrer" />`;
-    } else {
-      const inicial = (peer.nome || 'U').charAt(0).toUpperCase();
-      container.innerHTML = `<span class="avatar-inicial" style="background-color:${peer.cor || '#2563eb'}">${inicial}</span>`;
-    }
-
-    if (!isVoce) {
-      container.style.cursor = 'pointer';
-      container.onclick = () => {
-        if (typeof peer.lat === 'number' && typeof peer.lng === 'number' && window.AppMapa?.mapa) {
-          window.AppMapa.mapa.setView([peer.lat, peer.lng], Math.max(window.AppMapa.mapa.getZoom(), 7), {
-            animate: true
-          });
-        }
-      };
-    }
-
-    listaColaboradores.appendChild(container);
-  });
+function removerCursor(uid) {
+  const item = cursoresOutros.get(uid);
+  if (item) {
+    camadaCursores.removeLayer(item.marker);
+    cursoresOutros.delete(uid);
+  }
+  ultimasPosicoes.delete(uid);
 }
 
 // ---------------------------------------------------------------------------
-// Monitoramento de Presença e Conexão Firebase (.info/connected)
+// Renderização da Barra de Presença com DOM Diffing (Zero Flickering)
+// ---------------------------------------------------------------------------
+function atualizarListaColaboradores(presencas) {
+  if (!listaColaboradores) return;
+
+  const uidsNoServidor = new Set(Object.keys(presencas || {}));
+
+  // Remove avatares de quem saiu
+  elementosAvatares.forEach((el, uid) => {
+    if (!uidsNoServidor.has(uid)) {
+      el.remove();
+      elementosAvatares.delete(uid);
+      removerCursor(uid);
+      usuariosOnline.delete(uid);
+    }
+  });
+
+  // Atualiza / adiciona novos avatares sem recriar os existentes
+  Object.entries(presencas || {}).forEach(([uid, peer]) => {
+    if (!peer || !peer.uid) return;
+    usuariosOnline.set(uid, peer);
+
+    const isVoce = peer.uid === usuarioAtual?.uid;
+
+    if (!elementosAvatares.has(uid)) {
+      const container = document.createElement('div');
+      container.className = `avatar-colaborador ${isVoce ? 'avatar-voce' : ''}`;
+      container.style.borderColor = peer.cor || '#2563eb';
+      container.title = `${peer.nome || 'Colega'}${isVoce ? ' — Você' : ' — Clique para ver no mapa'}`;
+
+      if (peer.foto) {
+        const img = document.createElement('img');
+        img.src = peer.foto;
+        img.alt = peer.nome || 'Usuário';
+        img.referrerPolicy = 'no-referrer';
+        container.appendChild(img);
+      } else {
+        const inicial = (peer.nome || 'U').charAt(0).toUpperCase();
+        const span = document.createElement('span');
+        span.className = 'avatar-inicial';
+        span.style.backgroundColor = peer.cor || '#2563eb';
+        span.textContent = inicial;
+        container.appendChild(span);
+      }
+
+      if (!isVoce) {
+        container.style.cursor = 'pointer';
+        container.onclick = () => {
+          const pos = ultimasPosicoes.get(peer.uid);
+          if (pos && typeof pos.lat === 'number' && typeof pos.lng === 'number' && window.AppMapa?.mapa) {
+            window.AppMapa.mapa.setView([pos.lat, pos.lng], Math.max(window.AppMapa.mapa.getZoom(), 7), {
+              animate: true
+            });
+          }
+        };
+      }
+
+      listaColaboradores.appendChild(container);
+      elementosAvatares.set(uid, container);
+    }
+  });
+
+  // Indicador de "Apenas você" se for o único
+  let avisoSozinho = document.getElementById('aviso-sozinho');
+  if (uidsNoServidor.size <= 1) {
+    if (!avisoSozinho) {
+      avisoSozinho = document.createElement('span');
+      avisoSozinho.id = 'aviso-sozinho';
+      avisoSozinho.className = 'dica-online';
+      avisoSozinho.textContent = 'Apenas você na sala';
+      listaColaboradores.appendChild(avisoSozinho);
+    }
+  } else if (avisoSozinho) {
+    avisoSozinho.remove();
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Monitoramento de Presença e Conexão Firebase
 // ---------------------------------------------------------------------------
 let listenerPresencas = null;
+let listenerCursores = null;
 let refConexao = null;
 
 function iniciarGerenciamentoPresenca(user) {
   const presencaRef = ref(db, `presencas/${user.uid}`);
+  const cursorRef = ref(db, `cursores/${user.uid}`);
   refConexao = ref(db, '.info/connected');
 
   onValue(refConexao, (snap) => {
@@ -280,18 +326,16 @@ function iniciarGerenciamentoPresenca(user) {
 
       // Ao desconectar (fechar aba, cair internet), remove imediatamente do Realtime Database
       onDisconnect(presencaRef).remove();
+      onDisconnect(cursorRef).remove();
 
-      // Grava status inicial
+      // Grava dados estáticos de presença (uma única vez, sem ficar regravando!)
       set(presencaRef, {
         uid: user.uid,
         nome: user.displayName || 'Usuário',
         email: user.email || '',
         foto: user.photoURL || '',
         cor: corUsuarioAtual,
-        lat: null,
-        lng: null,
-        ativo: true,
-        conectadoEm: serverTimestamp()
+        onlineDesde: serverTimestamp()
       });
     } else {
       conectadoAoFirebase = false;
@@ -299,26 +343,39 @@ function iniciarGerenciamentoPresenca(user) {
     }
   });
 
-  // Escuta todas as presenças ativas
+  // Escuta presenças (só dispara quando alguém entra ou sai, NUNCA no mousemove!)
   const todasPresencasRef = ref(db, 'presencas');
   listenerPresencas = onValue(todasPresencasRef, (snap) => {
     const dados = snap.val() || {};
-    atualizarCursoresRemotos(dados);
-    renderizarListaColaboradores(dados);
+    atualizarListaColaboradores(dados);
+  });
+
+  // Escuta cursores (coordenadas de alta frequência)
+  const todosCursoresRef = ref(db, 'cursores');
+  listenerCursores = onValue(todosCursoresRef, (snap) => {
+    const dados = snap.val() || {};
+    Object.entries(dados).forEach(([uid, coord]) => {
+      processarAtualizacaoCursor(uid, coord);
+    });
   });
 }
 
 function encerrarGerenciamentoPresenca() {
   if (usuarioAtual) {
-    const presencaRef = ref(db, `presencas/${usuarioAtual.uid}`);
-    set(presencaRef, null);
+    set(ref(db, `presencas/${usuarioAtual.uid}`), null);
+    set(ref(db, `cursores/${usuarioAtual.uid}`), null);
   }
   if (camadaCursores) {
     camadaCursores.clearLayers();
   }
   cursoresOutros.clear();
-  presencasAtivas.clear();
+  ultimasPosicoes.clear();
+  elementosAvatares.forEach((el) => el.remove());
+  elementosAvatares.clear();
+  usuariosOnline.clear();
+
   if (listenerPresencas) off(ref(db, 'presencas'));
+  if (listenerCursores) off(ref(db, 'cursores'));
   if (refConexao) off(refConexao);
   conectadoAoFirebase = false;
   atualizarStatusUI('offline', 'Desconectado');
@@ -326,7 +383,7 @@ function encerrarGerenciamentoPresenca() {
 }
 
 // ---------------------------------------------------------------------------
-// Sincronização do Projeto (Mapa / Cores / Rotas / Marcadores)
+// Sincronização do Projeto (Preservando Seleção Local!)
 // ---------------------------------------------------------------------------
 let listenerProjeto = null;
 let ignorandoMudancaRemota = false;
@@ -334,17 +391,17 @@ let ignorandoMudancaRemota = false;
 function iniciarSincronizacaoProjeto() {
   const projetoRef = ref(db, 'projeto/compartilhado');
 
-  // Ao conectar, verifica se já existe um projeto na nuvem
+  // Ao conectar, carrega o estado da nuvem se existir
   get(projetoRef).then((snap) => {
     if (snap.exists()) {
       const payload = snap.val();
       if (payload && payload.dados && window.AppMapa?.aplicarEstadoDoObjeto) {
         console.log('Projeto carregado da nuvem:', payload.atualizadoPor?.nome);
-        window.AppMapa.aplicarEstadoDoObjeto(payload.dados);
+        // Preserva a seleção local do usuário
+        window.AppMapa.aplicarEstadoDoObjeto(payload.dados, { limparSelecao: false });
         ultimoHashEstadoLocal = JSON.stringify(payload.dados);
       }
     } else if (window.AppMapa?.estadoParaObjeto) {
-      // Se a nuvem estiver vazia, sobe o projeto local atual
       salvarProjetoRemotoImediato();
     }
   }).catch((err) => {
@@ -367,7 +424,8 @@ function iniciarSincronizacaoProjeto() {
     ignorandoMudancaRemota = true;
     try {
       if (window.AppMapa?.aplicarEstadoDoObjeto) {
-        window.AppMapa.aplicarEstadoDoObjeto(payload.dados);
+        // IMPORTANTE: limparSelecao = false garante que a seleção do usuário local permaneça intacta!
+        window.AppMapa.aplicarEstadoDoObjeto(payload.dados, { limparSelecao: false });
         ultimoHashEstadoLocal = hashRecebido;
         mostrarToast(`Mapa atualizado por ${payload.atualizadoPor?.nome || 'um colega'}`);
       }
@@ -415,10 +473,9 @@ export function notificarAlteracaoLocal() {
   if (!usuarioAtual || ignorandoMudancaRemota) return;
   atualizarStatusUI('salvando', 'Sincronizando...');
   clearTimeout(debouncersSalvar);
-  // Debounce de 350ms para agrupar múltiplos cliques consecutivos
   debouncersSalvar = setTimeout(() => {
     salvarProjetoRemotoImediato();
-  }, 350);
+  }, 300);
 }
 
 // ---------------------------------------------------------------------------
@@ -474,7 +531,6 @@ onAuthStateChanged(auth, (user) => {
   if (user) {
     corUsuarioAtual = extrairCorUsuario(user.uid);
 
-    // Atualiza interface do usuário logado
     if (btnLoginGoogle) btnLoginGoogle.classList.add('oculto');
     if (colabUsuario) colabUsuario.classList.remove('oculto');
     if (usuarioNome) usuarioNome.textContent = user.displayName || 'Usuário';
@@ -516,7 +572,7 @@ window.AppColaboracao = {
   forcarCarregamentoNuvem: () => {
     get(ref(db, 'projeto/compartilhado')).then((snap) => {
       if (snap.exists() && window.AppMapa?.aplicarEstadoDoObjeto) {
-        window.AppMapa.aplicarEstadoDoObjeto(snap.val().dados);
+        window.AppMapa.aplicarEstadoDoObjeto(snap.val().dados, { limparSelecao: false });
         mostrarToast('Mapa recarregado da nuvem!');
       }
     });
