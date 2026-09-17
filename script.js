@@ -798,6 +798,9 @@ function salvarProjeto() {
   } catch (erro) {
     console.warn('Não foi possível salvar o projeto no localStorage:', erro);
   }
+  if (window.AppColaboracao && typeof window.AppColaboracao.salvarRemoto === 'function') {
+    window.AppColaboracao.salvarRemoto();
+  }
 }
 
 function limparCamadasDinamicas() {
@@ -1056,6 +1059,16 @@ document.getElementById('btn-remover-grupo').addEventListener('click', removerSe
 document.getElementById('btn-exportar-json').addEventListener('click', exportarJSON);
 document.getElementById('btn-exportar-png').addEventListener('click', exportarPNG);
 document.getElementById('btn-resetar').addEventListener('click', resetarTudo);
+
+const btnRecarregarNuvem = document.getElementById('btn-recarregar-nuvem');
+if (btnRecarregarNuvem) {
+  btnRecarregarNuvem.addEventListener('click', () => {
+    if (window.AppColaboracao && typeof window.AppColaboracao.forcarCarregamentoNuvem === 'function') {
+      window.AppColaboracao.forcarCarregamentoNuvem();
+    }
+  });
+}
+
 document.getElementById('input-importar-json').addEventListener('change', (e) => {
   if (e.target.files[0]) importarJSON(e.target.files[0]);
   e.target.value = '';
@@ -1068,6 +1081,17 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+// Exporta referências para integração com colaboração em tempo real
+window.AppMapa = {
+  mapa,
+  estadoParaObjeto,
+  aplicarEstadoDoObjeto,
+  salvarProjeto,
+  repintarTodosMunicipios,
+  atualizarPainelSelecao,
+  limparCamadasDinamicas
+};
+
 // ---------------------------------------------------------------------------
 // Inicialização
 // ---------------------------------------------------------------------------
@@ -1076,4 +1100,6 @@ document.addEventListener('keydown', (e) => {
   await carregarCamadas();
   carregarProjetoSalvo();
   definirModo('selecionar');
+  window.dispatchEvent(new CustomEvent('appMapaPronto'));
 })();
+

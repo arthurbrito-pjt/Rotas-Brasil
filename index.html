@@ -28,6 +28,32 @@
       <input type="text" id="busca-input" placeholder="Buscar município..." autocomplete="off" />
       <div id="busca-resultados" class="oculto"></div>
     </div>
+
+    <!-- Área de Colaboração em Tempo Real (Firebase) -->
+    <div id="colaboracao-topbar">
+      <div id="status-sync" class="status-pill status-offline" title="Status da conexão em tempo real">
+        <span class="status-bolinha"></span>
+        <span id="status-sync-texto">Offline</span>
+      </div>
+
+      <div id="colaboradores-lista" title="Colaboradores online nesta sala"></div>
+
+      <button id="btn-login-google" class="btn-google" title="Entrar com conta Google para colaborar em tempo real">
+        <svg class="google-icone" viewBox="0 0 24 24">
+          <path fill="#4285F4" d="M23.745 12.27c0-.7-.06-1.4-.19-2.07H12v4.51h6.6c-.29 1.52-1.14 2.8-2.4 3.65v3.05h3.88c2.27-2.09 3.66-5.17 3.66-9.14z"/>
+          <path fill="#34A853" d="M12 24c3.24 0 5.95-1.08 7.93-2.91l-3.88-3.05c-1.08.72-2.45 1.16-4.05 1.16-3.12 0-5.77-2.1-6.72-4.93H1.25v3.15C3.26 21.36 7.33 24 12 24z"/>
+          <path fill="#FBBC05" d="M5.28 14.27c-.25-.72-.38-1.49-.38-2.27s.13-1.55.38-2.27V6.58H1.25C.45 8.18 0 9.99 0 12s.45 3.82 1.25 5.42l4.03-3.15z"/>
+          <path fill="#EA4335" d="M12 4.75c1.77 0 3.35.61 4.6 1.8l3.42-3.42C17.95 1.19 15.24 0 12 0 7.33 0 3.26 2.64 1.25 6.58l4.03 3.15c.95-2.83 3.6-4.98 6.72-4.98z"/>
+        </svg>
+        <span>Entrar com Google</span>
+      </button>
+
+      <div id="colab-usuario" class="usuario-perfil oculto">
+        <img id="usuario-foto" class="usuario-avatar oculto" alt="Avatar" referrerpolicy="no-referrer" />
+        <span id="usuario-nome" class="usuario-nome"></span>
+        <button id="btn-logout-colab" class="btn-logout" title="Sair da conta">Sair</button>
+      </div>
+    </div>
   </header>
 
   <div id="corpo">
@@ -134,6 +160,10 @@
         </label>
         <button id="btn-exportar-png">🖼️ Exportar imagem (PNG)</button>
         <hr />
+        <h2>Colaboração em Tempo Real</h2>
+        <p class="dica">As alterações feitas por qualquer usuário conectado são sincronizadas automaticamente pelo Firebase Realtime Database.</p>
+        <button id="btn-recarregar-nuvem" class="secundario">🔄 Forçar recarga da nuvem</button>
+        <hr />
         <button id="btn-resetar" class="perigo">🗑️ Limpar tudo</button>
       </section>
 
@@ -155,5 +185,6 @@
 </div>
 
 <script src="script.js"></script>
+<script type="module" src="colaboracao.js"></script>
 </body>
 </html>

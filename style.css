@@ -471,6 +471,7 @@ ul#lista-grupos, ul#lista-rotas, ul#lista-marcadores, ul#lista-textos {
 @media (max-width: 900px) {
   #painel { flex-basis: 260px; max-width: 260px; }
   #busca-container { width: 180px; }
+  #colaboradores-lista { display: none; }
 }
 
 @media (max-width: 680px) {
@@ -484,4 +485,271 @@ ul#lista-grupos, ul#lista-rotas, ul#lista-marcadores, ul#lista-textos {
   #modo-indicador { order: 4; flex-basis: 100%; }
   #filtro-estado-container { margin-left: 0; }
   #busca-container { width: 160px; }
+  #colaboracao-topbar { width: 100%; justify-content: flex-end; }
 }
+
+/* ======================================================================
+   Colaboração em Tempo Real (Firebase, Cursores e Presença)
+   ====================================================================== */
+
+#colaboracao-topbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: 4px;
+}
+
+/* Status Pill */
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  user-select: none;
+}
+
+.status-bolinha {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-online {
+  background: #ecfdf5;
+  color: #047857;
+  border-color: #a7f3d0;
+}
+.status-online .status-bolinha {
+  background: #10b981;
+  box-shadow: 0 0 5px #10b981;
+}
+
+.status-salvando {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fde68a;
+}
+.status-salvando .status-bolinha {
+  background: #f59e0b;
+}
+
+.status-offline {
+  background: #f3f4f6;
+  color: #6b7280;
+  border-color: #e5e7eb;
+}
+.status-offline .status-bolinha {
+  background: #9ca3af;
+}
+
+.status-erro {
+  background: #fef2f2;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.status-erro .status-bolinha {
+  background: #ef4444;
+}
+
+/* Lista de Colaboradores Online */
+#colaboradores-lista {
+  display: flex;
+  align-items: center;
+}
+
+.dica-online {
+  font-size: 11px;
+  color: var(--cor-texto-suave);
+  white-space: nowrap;
+}
+
+.avatar-colaborador {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 2px solid #2563eb;
+  overflow: hidden;
+  background: #e2e8f0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: -6px;
+  transition: transform 0.15s, z-index 0.15s;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
+}
+
+.avatar-colaborador:first-child {
+  margin-left: 0;
+}
+
+.avatar-colaborador:hover {
+  transform: scale(1.18);
+  z-index: 10;
+}
+
+.avatar-colaborador img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.avatar-inicial {
+  font-size: 12px;
+  font-weight: 700;
+  color: #fff;
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.avatar-voce {
+  opacity: 0.92;
+}
+
+/* Botão de Login com Google */
+.btn-google {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: #ffffff;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #374151;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+  white-space: nowrap;
+}
+
+.btn-google:hover {
+  background: #f9fafb;
+  border-color: #9ca3af;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+}
+
+.google-icone {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+}
+
+/* Área de Usuário Logado */
+.usuario-perfil {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.usuario-avatar {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 1px solid var(--cor-borda);
+  object-fit: cover;
+}
+
+.usuario-nome {
+  font-size: 12px;
+  font-weight: 600;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.btn-logout {
+  padding: 4px 8px;
+  font-size: 11px;
+  background: #fff;
+  border: 1px solid var(--cor-borda);
+  border-radius: 4px;
+  cursor: pointer;
+  color: var(--cor-texto-suave);
+  transition: all 0.15s;
+}
+
+.btn-logout:hover {
+  color: var(--cor-perigo);
+  border-color: var(--cor-perigo);
+}
+
+/* ----------------------------------------------------------------------
+   Cursores Colaborativos no Leaflet
+   ---------------------------------------------------------------------- */
+.cursor-leaflet-wrapper {
+  pointer-events: none !important;
+}
+
+.cursor-colaborador {
+  position: relative;
+  pointer-events: none !important;
+  will-change: transform;
+  transition: transform 0.08s cubic-bezier(0, 0, 0.2, 1);
+}
+
+.cursor-seta {
+  width: 22px;
+  height: 22px;
+  filter: drop-shadow(0 2px 4px rgba(0,0,0,0.32));
+  display: block;
+}
+
+.cursor-seta path {
+  fill: var(--cor-cursor, #2563eb);
+  stroke: #ffffff;
+  stroke-width: 1.5;
+  stroke-linejoin: round;
+}
+
+.cursor-badge {
+  position: absolute;
+  left: 14px;
+  top: 12px;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background-color: var(--cor-cursor, #2563eb);
+  color: #ffffff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.28);
+  pointer-events: none;
+}
+
+/* Toast de Notificação */
+#colab-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: rgba(15, 23, 42, 0.88);
+  backdrop-filter: blur(6px);
+  color: #f8fafc;
+  padding: 8px 18px;
+  border-radius: 24px;
+  font-size: 12px;
+  font-weight: 500;
+  box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+  opacity: 0;
+  transform: translateY(14px);
+  transition: opacity 0.22s ease, transform 0.22s ease;
+  pointer-events: none;
+  z-index: 9999;
+}
+
+#colab-toast.visivel {
+  opacity: 1;
+  transform: translateY(0);
+}
+
