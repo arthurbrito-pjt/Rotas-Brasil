@@ -2,10 +2,11 @@
 // Colaboração em Tempo Real com Firebase (Realtime Database & Auth)
 // Suporta:
 // - Login / Logout com Google
-// - Presença online de múltiplos usuários (sem recarregar avatares)
-// - Cursores ao vivo no mapa Leaflet (com coordenadas lat/lng reais e zero piscamento)
-// - Sincronização em tempo real de cores, grupos, rotas, marcadores e textos
-// - Preservação estrita da seleção individual de cada usuário
+// - Identificação por sessão exclusiva (suporta abas simultâneas ou contas compartilhadas)
+// - Presença online e avatares no topo sem nenhum piscamento (DOM diffing)
+// - Cursores em tempo real com Leaflet (lat/lng reais e transições suaves de opacidade)
+// - Sincronização inteligente e não-destrutiva de cores, grupos, rotas, marcadores e textos
+// - Preservação estrita e absoluta da seleção e ferramentas ativas de cada usuário
 // ============================================================================
 
 import {
@@ -24,6 +25,9 @@ import {
   off
 } from './firebase-config.js';
 
+// ID de sessão único por aba/janela aberta (evita conflitos mesmo testando na mesma máquina ou conta)
+const sessionId = 's_' + Math.random().toString(36).slice(2, 9) + '_' + Date.now().toString(36);
+
 // Paleta de cores moderna e distinta para cada colaborador
 const PALETA_CORES = [
   '#2563eb', // Azul
@@ -38,11 +42,11 @@ const PALETA_CORES = [
   '#0d9488', // Teal
 ];
 
-function extrairCorUsuario(uid) {
-  if (!uid) return PALETA_CORES[0];
+function extrairCorUsuario(id) {
+  if (!id) return PALETA_CORES[0];
   let hash = 0;
-  for (let i = 0; i < uid.length; i++) {
-    hash = uid.charCodeAt(i) + ((hash << 5) - hash);
+  for (let i = 0; i < id.length; i++) {
+    hash = id.charCodeAt(i) + ((hash << 5) - hash);
   }
   return PALETA_CORES[Math.abs(hash) % PALETA_CORES.length];
 }
@@ -54,13 +58,13 @@ let usuarioAtual = null;
 let corUsuarioAtual = null;
 let camadaCursores = null;
 
-// Mapa de cursores ativos no Leaflet: uid -> { marker, el, dados }
+// Mapa de cursores ativos no Leaflet: sessionId -> { marker, el, dados }
 const cursoresOutros = new Map();
-// Informações estáticas de usuários online: uid -> { uid, nome, email, foto, cor }
+// Informações estáticas de usuários online: sessionId -> { sessionId, uid, nome, email, foto, cor }
 const usuariosOnline = new Map();
-// Última posição conhecida do cursor: uid -> { lat, lng }
+// Última posição conhecida do cursor: sessionId -> { lat, lng }
 const ultimasPosicoes = new Map();
-// Elementos DOM dos avatares no topbar: uid -> HTMLElement
+// Elementos DOM dos avatares no topbar: sessionId -> HTMLElement
 const elementosAvatares = new Map();
 
 let debouncersSalvar = null;
@@ -132,8 +136,9 @@ function enviarPosicaoCursor(lat, lng) {
   if (ultimaPosicaoEnviada === chavePos) return;
   ultimaPosicaoEnviada = chavePos;
 
-  const cursorRef = ref(db, `cursores/${usuarioAtual.uid}`);
+  const cursorRef = ref(db, `cursores/${sessionId}`);
   set(cursorRef, {
+    sessionId,
     lat: lat !== null && lat !== undefined ? Number(lat.toFixed(5)) : null,
     lng: lng !== null && lng !== undefined ? Number(lng.toFixed(5)) : null,
     t: Date.now()
@@ -183,17 +188,17 @@ window.addEventListener('appMapaPronto', () => {
 // ---------------------------------------------------------------------------
 // Atualização dos Cursores Remotos (Sem Piscar!)
 // ---------------------------------------------------------------------------
-function processarAtualizacaoCursor(uid, coord) {
+function processarAtualizacaoCursor(idSessao, coord) {
   if (!garantirCamadaCursores()) return;
-  if (uid === usuarioAtual?.uid) return;
+  if (idSessao === sessionId) return; // Ignora o cursor da própria aba
 
   const temCoord = coord && typeof coord.lat === 'number' && typeof coord.lng === 'number';
 
   if (temCoord) {
-    ultimasPosicoes.set(uid, { lat: coord.lat, lng: coord.lng });
+    ultimasPosicoes.set(idSessao, { lat: coord.lat, lng: coord.lng });
   }
 
-  let item = cursoresOutros.get(uid);
+  let item = cursoresOutros.get(idSessao);
 
   if (temCoord) {
     if (item) {
@@ -202,7 +207,11 @@ function processarAtualizacaoCursor(uid, coord) {
         item.el.classList.remove('cursor-oculto');
       }
     } else {
-      const peer = usuariosOnline.get(uid) || { uid, nome: 'Colega', cor: extrairCorUsuario(uid) };
+      const peer = usuariosOnline.get(idSessao) || {
+        sessionId: idSessao,
+        nome: 'Colega',
+        cor: extrairCorUsuario(idSessao)
+      };
       const marker = L.marker([coord.lat, coord.lng], {
         icon: criarIconeCursor(peer),
         interactive: false,
@@ -210,7 +219,7 @@ function processarAtualizacaoCursor(uid, coord) {
       }).addTo(camadaCursores);
 
       const el = marker.getElement();
-      cursoresOutros.set(uid, { marker, el, dados: peer });
+      cursoresOutros.set(idSessao, { marker, el, dados: peer });
     }
   } else if (item) {
     // Quando sai do mapa, apenas oculta suavemente via CSS em vez de destruir e recriar o elemento!
@@ -220,13 +229,13 @@ function processarAtualizacaoCursor(uid, coord) {
   }
 }
 
-function removerCursor(uid) {
-  const item = cursoresOutros.get(uid);
+function removerCursor(idSessao) {
+  const item = cursoresOutros.get(idSessao);
   if (item) {
     camadaCursores.removeLayer(item.marker);
-    cursoresOutros.delete(uid);
+    cursoresOutros.delete(idSessao);
   }
-  ultimasPosicoes.delete(uid);
+  ultimasPosicoes.delete(idSessao);
 }
 
 // ---------------------------------------------------------------------------
@@ -235,26 +244,26 @@ function removerCursor(uid) {
 function atualizarListaColaboradores(presencas) {
   if (!listaColaboradores) return;
 
-  const uidsNoServidor = new Set(Object.keys(presencas || {}));
+  const idsNoServidor = new Set(Object.keys(presencas || {}));
 
-  // Remove avatares de quem saiu
-  elementosAvatares.forEach((el, uid) => {
-    if (!uidsNoServidor.has(uid)) {
+  // Remove avatares de sessões que saíram
+  elementosAvatares.forEach((el, idSessao) => {
+    if (!idsNoServidor.has(idSessao)) {
       el.remove();
-      elementosAvatares.delete(uid);
-      removerCursor(uid);
-      usuariosOnline.delete(uid);
+      elementosAvatares.delete(idSessao);
+      removerCursor(idSessao);
+      usuariosOnline.delete(idSessao);
     }
   });
 
   // Atualiza / adiciona novos avatares sem recriar os existentes
-  Object.entries(presencas || {}).forEach(([uid, peer]) => {
-    if (!peer || !peer.uid) return;
-    usuariosOnline.set(uid, peer);
+  Object.entries(presencas || {}).forEach(([idSessao, peer]) => {
+    if (!peer) return;
+    usuariosOnline.set(idSessao, peer);
 
-    const isVoce = peer.uid === usuarioAtual?.uid;
+    const isVoce = idSessao === sessionId;
 
-    if (!elementosAvatares.has(uid)) {
+    if (!elementosAvatares.has(idSessao)) {
       const container = document.createElement('div');
       container.className = `avatar-colaborador ${isVoce ? 'avatar-voce' : ''}`;
       container.style.borderColor = peer.cor || '#2563eb';
@@ -278,7 +287,7 @@ function atualizarListaColaboradores(presencas) {
       if (!isVoce) {
         container.style.cursor = 'pointer';
         container.onclick = () => {
-          const pos = ultimasPosicoes.get(peer.uid);
+          const pos = ultimasPosicoes.get(idSessao);
           if (pos && typeof pos.lat === 'number' && typeof pos.lng === 'number' && window.AppMapa?.mapa) {
             window.AppMapa.mapa.setView([pos.lat, pos.lng], Math.max(window.AppMapa.mapa.getZoom(), 7), {
               animate: true
@@ -288,13 +297,13 @@ function atualizarListaColaboradores(presencas) {
       }
 
       listaColaboradores.appendChild(container);
-      elementosAvatares.set(uid, container);
+      elementosAvatares.set(idSessao, container);
     }
   });
 
   // Indicador de "Apenas você" se for o único
   let avisoSozinho = document.getElementById('aviso-sozinho');
-  if (uidsNoServidor.size <= 1) {
+  if (idsNoServidor.size <= 1) {
     if (!avisoSozinho) {
       avisoSozinho = document.createElement('span');
       avisoSozinho.id = 'aviso-sozinho';
@@ -315,8 +324,8 @@ let listenerCursores = null;
 let refConexao = null;
 
 function iniciarGerenciamentoPresenca(user) {
-  const presencaRef = ref(db, `presencas/${user.uid}`);
-  const cursorRef = ref(db, `cursores/${user.uid}`);
+  const presencaRef = ref(db, `presencas/${sessionId}`);
+  const cursorRef = ref(db, `cursores/${sessionId}`);
   refConexao = ref(db, '.info/connected');
 
   onValue(refConexao, (snap) => {
@@ -328,8 +337,9 @@ function iniciarGerenciamentoPresenca(user) {
       onDisconnect(presencaRef).remove();
       onDisconnect(cursorRef).remove();
 
-      // Grava dados estáticos de presença (uma única vez, sem ficar regravando!)
+      // Grava dados estáticos de presença (uma única vez por sessão)
       set(presencaRef, {
+        sessionId,
         uid: user.uid,
         nome: user.displayName || 'Usuário',
         email: user.email || '',
@@ -354,16 +364,16 @@ function iniciarGerenciamentoPresenca(user) {
   const todosCursoresRef = ref(db, 'cursores');
   listenerCursores = onValue(todosCursoresRef, (snap) => {
     const dados = snap.val() || {};
-    Object.entries(dados).forEach(([uid, coord]) => {
-      processarAtualizacaoCursor(uid, coord);
+    Object.entries(dados).forEach(([idSessao, coord]) => {
+      processarAtualizacaoCursor(idSessao, coord);
     });
   });
 }
 
 function encerrarGerenciamentoPresenca() {
   if (usuarioAtual) {
-    set(ref(db, `presencas/${usuarioAtual.uid}`), null);
-    set(ref(db, `cursores/${usuarioAtual.uid}`), null);
+    set(ref(db, `presencas/${sessionId}`), null);
+    set(ref(db, `cursores/${sessionId}`), null);
   }
   if (camadaCursores) {
     camadaCursores.clearLayers();
@@ -383,7 +393,7 @@ function encerrarGerenciamentoPresenca() {
 }
 
 // ---------------------------------------------------------------------------
-// Sincronização do Projeto (Preservando Seleção Local!)
+// Sincronização do Projeto (Preservando Seleção e Ferramentas Locais!)
 // ---------------------------------------------------------------------------
 let listenerProjeto = null;
 let ignorandoMudancaRemota = false;
@@ -395,10 +405,9 @@ function iniciarSincronizacaoProjeto() {
   get(projetoRef).then((snap) => {
     if (snap.exists()) {
       const payload = snap.val();
-      if (payload && payload.dados && window.AppMapa?.aplicarEstadoDoObjeto) {
+      if (payload && payload.dados && window.AppMapa?.aplicarEstadoRemoto) {
         console.log('Projeto carregado da nuvem:', payload.atualizadoPor?.nome);
-        // Preserva a seleção local do usuário
-        window.AppMapa.aplicarEstadoDoObjeto(payload.dados, { limparSelecao: false });
+        window.AppMapa.aplicarEstadoRemoto(payload.dados);
         ultimoHashEstadoLocal = JSON.stringify(payload.dados);
       }
     } else if (window.AppMapa?.estadoParaObjeto) {
@@ -414,8 +423,8 @@ function iniciarSincronizacaoProjeto() {
     const payload = snap.val();
     if (!payload || !payload.dados) return;
 
-    // Ignora alterações originadas pelo próprio usuário local
-    if (payload.atualizadoPor?.uid === usuarioAtual?.uid) return;
+    // Ignora alterações originadas pela própria aba
+    if (payload.atualizadoPor?.sessionId === sessionId) return;
 
     const hashRecebido = JSON.stringify(payload.dados);
     if (hashRecebido === ultimoHashEstadoLocal) return;
@@ -423,9 +432,9 @@ function iniciarSincronizacaoProjeto() {
     console.log(`Recebida atualização remota de ${payload.atualizadoPor?.nome || 'Colega'}`);
     ignorandoMudancaRemota = true;
     try {
-      if (window.AppMapa?.aplicarEstadoDoObjeto) {
-        // IMPORTANTE: limparSelecao = false garante que a seleção do usuário local permaneça intacta!
-        window.AppMapa.aplicarEstadoDoObjeto(payload.dados, { limparSelecao: false });
+      if (window.AppMapa?.aplicarEstadoRemoto) {
+        // Aplicação não-destrutiva: NUNCA desseleciona nem cancela rotas/itens locais!
+        window.AppMapa.aplicarEstadoRemoto(payload.dados);
         ultimoHashEstadoLocal = hashRecebido;
         mostrarToast(`Mapa atualizado por ${payload.atualizadoPor?.nome || 'um colega'}`);
       }
@@ -456,6 +465,7 @@ function salvarProjetoRemotoImediato() {
   set(projetoRef, {
     dados,
     atualizadoPor: {
+      sessionId,
       uid: usuarioAtual.uid,
       nome: usuarioAtual.displayName || 'Usuário',
       email: usuarioAtual.email || ''
@@ -529,7 +539,7 @@ onAuthStateChanged(auth, (user) => {
   usuarioAtual = user;
 
   if (user) {
-    corUsuarioAtual = extrairCorUsuario(user.uid);
+    corUsuarioAtual = extrairCorUsuario(sessionId);
 
     if (btnLoginGoogle) btnLoginGoogle.classList.add('oculto');
     if (colabUsuario) colabUsuario.classList.remove('oculto');
@@ -571,8 +581,8 @@ window.AppColaboracao = {
   salvarRemoto: notificarAlteracaoLocal,
   forcarCarregamentoNuvem: () => {
     get(ref(db, 'projeto/compartilhado')).then((snap) => {
-      if (snap.exists() && window.AppMapa?.aplicarEstadoDoObjeto) {
-        window.AppMapa.aplicarEstadoDoObjeto(snap.val().dados, { limparSelecao: false });
+      if (snap.exists() && window.AppMapa?.aplicarEstadoRemoto) {
+        window.AppMapa.aplicarEstadoRemoto(snap.val().dados);
         mostrarToast('Mapa recarregado da nuvem!');
       }
     });

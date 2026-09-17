@@ -850,6 +850,129 @@ function aplicarEstadoDoObjeto(obj, { limparSelecao = false } = {}) {
   atualizarPainelSelecao();
 }
 
+// ---------------------------------------------------------------------------
+// Sincronização Remota Não-Destrutiva (Colaboração em Tempo Real)
+// Atualiza cores, grupos, rotas, marcadores e textos vindos da nuvem
+// SEM interferir na seleção local, rotas em andamento ou camadas do usuário.
+// ---------------------------------------------------------------------------
+function aplicarEstadoRemoto(remoto) {
+  if (!remoto) return;
+
+  // 1. Atualiza cores individuais
+  coresIndividuais = new Map(Object.entries(remoto.coresIndividuais || {}));
+
+  // 2. Atualiza municípios pertencentes a grupos
+  municipioParaGrupo = new Map(Object.entries(remoto.municipioParaGrupo || {}));
+
+  // 3. Atualiza grupos
+  grupos = Array.isArray(remoto.grupos) ? remoto.grupos : [];
+
+  // 4. Sincronização inteligente de rotas (preserva linhaRotaTemp da rota em andamento do usuário)
+  const rotasRemotas = Array.isArray(remoto.rotas) ? remoto.rotas : [];
+  const idsRotasRemotas = new Set(rotasRemotas.map((r) => r.id));
+
+  rotas = rotas.filter((r) => {
+    if (!idsRotasRemotas.has(r.id)) {
+      if (r.layer) camadaRotas.removeLayer(r.layer);
+      return false;
+    }
+    return true;
+  });
+
+  rotasRemotas.forEach((rRemota) => {
+    const rotaExistente = rotas.find((r) => r.id === rRemota.id);
+    if (!rotaExistente) {
+      const layer = L.polyline(rRemota.pontos, { renderer: rendererCompartilhado, color: rRemota.cor, weight: 3 })
+        .addTo(camadaRotas)
+        .bindTooltip(rRemota.nome, { sticky: true });
+      rotas.push({ ...rRemota, layer });
+    } else {
+      if (rotaExistente.cor !== rRemota.cor && rotaExistente.layer) {
+        rotaExistente.layer.setStyle({ color: rRemota.cor });
+        rotaExistente.cor = rRemota.cor;
+      }
+      if (rotaExistente.nome !== rRemota.nome && rotaExistente.layer) {
+        rotaExistente.layer.setTooltipContent(rRemota.nome);
+        rotaExistente.nome = rRemota.nome;
+      }
+    }
+  });
+
+  // 5. Sincronização inteligente de marcadores (não fecha popups ativos desnecessariamente)
+  const marcadoresRemotos = Array.isArray(remoto.marcadores) ? remoto.marcadores : [];
+  const idsMarcadoresRemotos = new Set(marcadoresRemotos.map((m) => m.id));
+
+  marcadores = marcadores.filter((m) => {
+    if (!idsMarcadoresRemotos.has(m.id)) {
+      if (m.layer) camadaMarcadores.removeLayer(m.layer);
+      return false;
+    }
+    return true;
+  });
+
+  marcadoresRemotos.forEach((mRemoto) => {
+    const mExistente = marcadores.find((m) => m.id === mRemoto.id);
+    if (!mExistente) {
+      adicionarMarcador({ ...mRemoto });
+    } else {
+      if (mExistente.lat !== mRemoto.lat || mExistente.lng !== mRemoto.lng) {
+        mExistente.lat = mRemoto.lat;
+        mExistente.lng = mRemoto.lng;
+        if (mExistente.layer) mExistente.layer.setLatLng([mRemoto.lat, mRemoto.lng]);
+      }
+      if (mExistente.titulo !== mRemoto.titulo || mExistente.texto !== mRemoto.texto) {
+        mExistente.titulo = mRemoto.titulo;
+        mExistente.texto = mRemoto.texto;
+        if (mExistente.layer) {
+          mExistente.layer.setPopupContent(`<b>${mRemoto.titulo}</b>${mRemoto.texto ? '<br>' + mRemoto.texto : ''}`);
+        }
+      }
+    }
+  });
+
+  // 6. Sincronização inteligente de textos
+  const textosRemotos = Array.isArray(remoto.textos) ? remoto.textos : [];
+  const idsTextosRemotos = new Set(textosRemotos.map((t) => t.id));
+
+  textos = textos.filter((t) => {
+    if (!idsTextosRemotos.has(t.id)) {
+      if (t.layer) camadaTextos.removeLayer(t.layer);
+      return false;
+    }
+    return true;
+  });
+
+  textosRemotos.forEach((tRemoto) => {
+    const tExistente = textos.find((t) => t.id === tRemoto.id);
+    if (!tExistente) {
+      adicionarTexto({ ...tRemoto });
+    } else {
+      if (tExistente.lat !== tRemoto.lat || tExistente.lng !== tRemoto.lng) {
+        tExistente.lat = tRemoto.lat;
+        tExistente.lng = tRemoto.lng;
+        if (tExistente.layer) tExistente.layer.setLatLng([tRemoto.lat, tRemoto.lng]);
+      }
+      if (tExistente.texto !== tRemoto.texto) {
+        tExistente.texto = tRemoto.texto;
+        if (tExistente.layer) {
+          tExistente.layer.setIcon(L.divIcon({ className: 'icone-texto', html: tRemoto.texto, iconSize: null }));
+        }
+      }
+    }
+  });
+
+  // 7. Atualiza listas do painel lateral
+  renderizarListaGrupos();
+  renderizarListaRotas();
+  renderizarListaMarcadores();
+  renderizarListaTextos();
+
+  // 8. Repinta municípios com as novas cores/grupos, MANTENDO o contorno tracejado
+  // dos municípios que o usuário local tem selecionados!
+  repintarTodosMunicipios();
+  atualizarPainelSelecao();
+}
+
 function carregarProjetoSalvo() {
   const bruto = localStorage.getItem(CHAVE_LOCALSTORAGE);
   if (!bruto) return;
@@ -983,7 +1106,7 @@ function aplicarVisibilidadeCamadas() {
 }
 
 ['chk-estados', 'chk-mesorregioes', 'chk-municipios', 'chk-rotulos-estados', 'chk-rotulos-mesorregioes']
-  .forEach((id) => document.getElementById(id).addEventListener('change', () => { aplicarVisibilidadeCamadas(); salvarProjeto(); }));
+  .forEach((id) => document.getElementById(id).addEventListener('change', () => { aplicarVisibilidadeCamadas(); }));
 
 // ---------------------------------------------------------------------------
 // Filtro por estado (visão geral x foco em um único estado)
@@ -1089,6 +1212,7 @@ window.AppMapa = {
   mapa,
   estadoParaObjeto,
   aplicarEstadoDoObjeto,
+  aplicarEstadoRemoto,
   salvarProjeto,
   repintarTodosMunicipios,
   atualizarPainelSelecao,
