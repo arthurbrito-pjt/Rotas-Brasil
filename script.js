@@ -177,15 +177,45 @@ function estiloMunicipio(feature) {
   const cor = corDoMunicipio(codigo);
   const selecionado = selecionados.has(codigo);
   const oculto = foraDoFiltro(feature);
+  const chkMun = document.getElementById('chk-municipios');
+  const exibirContornoMunicipios = chkMun ? chkMun.checked : true;
+
+  if (oculto) {
+    return {
+      renderer: rendererCompartilhado,
+      fill: false,
+      fillOpacity: 0,
+      opacity: 0,
+      weight: 0,
+    };
+  }
+
+  // Se o contorno de municípios estiver desativado, apenas municípios sem cor e não selecionados
+  // ficam transparentes; os municípios com cor continuam 100% visíveis da mesma forma!
+  const temCor = !!cor;
+  const visivel = exibirContornoMunicipios || temCor || selecionado;
+
+  if (!visivel) {
+    return {
+      renderer: rendererCompartilhado,
+      fill: false,
+      fillOpacity: 0,
+      opacity: 0,
+      weight: 0,
+    };
+  }
+
   return {
     renderer: rendererCompartilhado,
-    fill: true,
+    fill: temCor,
     fillColor: cor || '#ffffff',
-    fillOpacity: oculto ? 0 : (cor ? 0.72 : 0),
-    color: selecionado ? CORES.municipioContornoSelecionado : CORES.municipioContorno,
-    weight: selecionado ? 2.5 : 0.8,
+    fillOpacity: temCor ? 0.72 : 0,
+    color: selecionado
+      ? CORES.municipioContornoSelecionado
+      : (exibirContornoMunicipios ? CORES.municipioContorno : cor),
+    weight: selecionado ? 2.5 : (exibirContornoMunicipios ? 0.8 : (temCor ? 0.6 : 0)),
     dashArray: selecionado ? '5,3' : null,
-    opacity: oculto ? 0 : 1,
+    opacity: selecionado ? 1 : (exibirContornoMunicipios ? 1 : (temCor ? 0.72 : 0)),
   };
 }
 
@@ -316,6 +346,13 @@ async function carregarCamadas() {
 
       layer.on('mouseover', () => {
         if (foraDoFiltro(feature)) { layer.closeTooltip(); return; }
+        const chkMun = document.getElementById('chk-municipios');
+        const exibirContornoMunicipios = chkMun ? chkMun.checked : true;
+        const temCorOuSel = corDoMunicipio(p.codigo) || selecionados.has(p.codigo);
+        if (!exibirContornoMunicipios && !temCorOuSel) {
+          layer.closeTooltip();
+          return;
+        }
         // "Pintar" a seleção: com Shift pressionado e o botão do mouse
         // apertado, cada município sob o cursor é adicionado à seleção.
         if (modoAtual === 'selecionar' && arrastandoComShiftAtivo) {
@@ -540,14 +577,21 @@ function renderizarListaGrupos() {
   grupos.forEach((g) => {
     const qtd = Array.from(municipioParaGrupo.values()).filter((v) => v === g.id).length;
     const li = document.createElement('li');
-    li.className = 'item-lista';
+    li.className = 'card-grupo';
     li.innerHTML = `
-      <input type="color" class="input-cor-grupo" value="${g.cor}" title="Alterar cor do grupo" />
-      <span class="item-nome" title="${g.nome} (duplo clique para renomear)">${g.nome} (${qtd})</span>
-      <button data-acao="editar" title="Editar nome do grupo">✏️</button>
-      <button data-acao="adicionar" title="Adicionar selecionados a este grupo">➕</button>
-      <button data-acao="ir" title="Selecionar e centralizar">🎯</button>
-      <button data-acao="excluir" title="Excluir grupo">🗑️</button>
+      <div class="card-grupo-topo">
+        <input type="color" class="input-cor-grupo" value="${g.cor}" title="Alterar cor do grupo" />
+        <div class="card-grupo-info" title="Duplo clique para renomear">
+          <span class="card-grupo-nome">${g.nome}</span>
+          <span class="card-grupo-contagem">${qtd} ${qtd === 1 ? 'município' : 'municípios'}</span>
+        </div>
+      </div>
+      <div class="card-grupo-acoes">
+        <button type="button" class="btn-acao-grupo" data-acao="editar" title="Editar nome do grupo">✏️ Renomear</button>
+        <button type="button" class="btn-acao-grupo" data-acao="adicionar" title="Adicionar municípios selecionados a este grupo">➕ Adicionar</button>
+        <button type="button" class="btn-acao-grupo" data-acao="ir" title="Selecionar municípios deste grupo e focar no mapa">🎯 Focar</button>
+        <button type="button" class="btn-acao-grupo btn-acao-perigo" data-acao="excluir" title="Excluir grupo">🗑️</button>
+      </div>
     `;
 
     // Alteração de cor do grupo em tempo real
@@ -573,7 +617,7 @@ function renderizarListaGrupos() {
       }
     };
     li.querySelector('[data-acao="editar"]').onclick = fnEditarNome;
-    li.querySelector('.item-nome').ondblclick = fnEditarNome;
+    li.querySelector('.card-grupo-info').ondblclick = fnEditarNome;
 
     li.querySelector('[data-acao="adicionar"]').onclick = () => adicionarSelecionadosAoGrupo(g.id);
     li.querySelector('[data-acao="ir"]').onclick = () => selecionarMunicipiosDoGrupo(g.id);
@@ -1387,9 +1431,15 @@ function aplicarVisibilidadeCamadas() {
   };
   alternar('chk-estados', camadaEstados);
   alternar('chk-mesorregioes', camadaMesorregioes);
-  alternar('chk-municipios', camadaMunicipios);
   alternar('chk-rotulos-estados', camadaRotulosEstados);
   alternar('chk-rotulos-mesorregioes', camadaRotulosMesorregioes);
+
+  // A camada de municípios permanece sempre adicionada ao mapa para que os municípios
+  // pintados/coloridos continuem visíveis da mesma forma mesmo ao desmarcar os contornos.
+  if (!mapa.hasLayer(camadaMunicipios)) {
+    mapa.addLayer(camadaMunicipios);
+  }
+  repintarTodosMunicipios();
 }
 
 ['chk-estados', 'chk-mesorregioes', 'chk-municipios', 'chk-rotulos-estados', 'chk-rotulos-mesorregioes']

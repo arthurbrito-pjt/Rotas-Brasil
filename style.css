@@ -349,24 +349,130 @@ ul#lista-grupos, ul#lista-rotas, ul#lista-marcadores, ul#lista-textos {
   white-space: nowrap;
 }
 
-.item-lista input[type="color"].input-cor-grupo {
-  width: 22px;
-  height: 22px;
-  padding: 0;
-  border: 1px solid var(--cor-borda);
-  border-radius: 4px;
+/* Garante que botões em listas simples (rotas, marcadores, textos) fiquem limpos */
+#painel .item-lista button {
+  display: inline-flex !important;
+  width: auto !important;
+  padding: 4px 6px !important;
+  margin: 0 1px !important;
+  background: transparent !important;
+  color: var(--cor-texto) !important;
+  border: 1px solid transparent !important;
+  border-radius: 4px !important;
+  font-size: 13px !important;
   cursor: pointer;
-  flex: 0 0 auto;
+}
+#painel .item-lista button:hover {
+  background: #f1f5f9 !important;
+  border-color: var(--cor-borda) !important;
+  opacity: 1 !important;
 }
 
-.item-lista button {
-  border: none;
-  background: transparent;
-  cursor: pointer;
-  font-size: 13px;
-  padding: 2px 4px;
+/* ---------- Card de Grupo (Nome em cima, opções embaixo) ---------- */
+.card-grupo {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: #ffffff;
+  border: 1px solid var(--cor-borda);
+  border-radius: 8px;
+  padding: 9px 10px;
+  margin-bottom: 8px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
 }
-.item-lista button:hover { opacity: 0.6; }
+
+.card-grupo:hover {
+  border-color: #cbd5e1;
+  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.07);
+}
+
+.card-grupo-topo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+}
+
+.card-grupo-info {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  cursor: pointer;
+}
+
+.card-grupo-nome {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--cor-texto);
+  word-break: break-word;
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.card-grupo-contagem {
+  font-size: 11px;
+  color: var(--cor-texto-suave);
+  margin-top: 1px;
+}
+
+.card-grupo input[type="color"].input-cor-grupo {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--cor-borda);
+  border-radius: 6px;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.card-grupo-acoes {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  width: 100%;
+  flex-wrap: wrap;
+  padding-top: 4px;
+  border-top: 1px solid #f1f5f9;
+}
+
+#painel .card-grupo button.btn-acao-grupo {
+  display: inline-flex !important;
+  width: auto !important;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+  padding: 5px 8px !important;
+  margin: 0 !important;
+  background: #f8fafc !important;
+  color: var(--cor-texto) !important;
+  border: 1px solid var(--cor-borda) !important;
+  border-radius: 5px !important;
+  font-size: 11px !important;
+  font-weight: 500 !important;
+  cursor: pointer;
+  white-space: nowrap;
+  flex: 1 1 auto;
+  transition: all 0.15s ease;
+}
+
+#painel .card-grupo button.btn-acao-grupo:hover {
+  background: #f1f5f9 !important;
+  border-color: #94a3b8 !important;
+  color: var(--cor-primaria) !important;
+}
+
+#painel .card-grupo button.btn-acao-grupo.btn-acao-perigo {
+  flex: 0 0 auto !important;
+  color: var(--cor-perigo) !important;
+  padding: 5px 8px !important;
+}
+
+#painel .card-grupo button.btn-acao-grupo.btn-acao-perigo:hover {
+  background: #fef2f2 !important;
+  border-color: #fca5a5 !important;
+}
 
 /* Bloco de Ações Rápidas por Mesorregião */
 .bloco-acao-rapida {
