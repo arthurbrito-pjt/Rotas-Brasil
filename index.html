@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Mapa Interativo do Brasil — Estados, Mesorregiões e Municípios</title>
+
+<!-- Leaflet.js (única biblioteca externa utilizada) -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+
+<div id="app">
+
+  <!-- Barra superior -->
+  <header id="topbar">
+    <h1>Mapa do Brasil</h1>
+    <div id="modo-indicador" class="chip oculto">Modo: <span id="modo-texto"></span></div>
+    <div id="busca-container">
+      <input type="text" id="busca-input" placeholder="Buscar município..." autocomplete="off" />
+      <div id="busca-resultados" class="oculto"></div>
+    </div>
+  </header>
+
+  <div id="corpo">
+
+    <!-- Mapa -->
+    <main id="mapa-container">
+      <div id="mapa"></div>
+
+      <!-- Barra de ferramentas flutuante sobre o mapa -->
+      <div id="toolbar">
+        <button id="btn-selecionar" class="tool-btn ativo" title="Selecionar município(s)">🖱️ Selecionar</button>
+        <button id="btn-multi" class="tool-btn" title="Selecionar vários municípios">🔲 Multi-seleção</button>
+        <button id="btn-rota" class="tool-btn" title="Desenhar rota">📏 Rota</button>
+        <button id="btn-marcador" class="tool-btn" title="Adicionar marcador">📍 Marcador</button>
+        <button id="btn-texto" class="tool-btn" title="Inserir texto/observação">📝 Texto</button>
+        <button id="btn-finalizar" class="tool-btn oculto" title="Finalizar rota atual">✔️ Finalizar rota</button>
+        <button id="btn-limpar-selecao" class="tool-btn" title="Limpar seleção">✖️ Limpar seleção</button>
+      </div>
+
+      <div id="legenda-hover" class="oculto"></div>
+    </main>
+
+    <!-- Painel lateral -->
+    <aside id="painel">
+
+      <nav id="abas">
+        <button class="aba-btn ativo" data-aba="camadas">Camadas</button>
+        <button class="aba-btn" data-aba="cores">Cores/Grupos</button>
+        <button class="aba-btn" data-aba="itens">Rotas/Marcadores</button>
+        <button class="aba-btn" data-aba="projeto">Projeto</button>
+      </nav>
+
+      <!-- Aba: Camadas -->
+      <section class="aba-conteudo" id="aba-camadas">
+        <h2>Camadas do mapa</h2>
+        <label class="linha-check">
+          <input type="checkbox" id="chk-estados" checked />
+          Estados (contorno preto)
+        </label>
+        <label class="linha-check">
+          <input type="checkbox" id="chk-mesorregioes" checked />
+          Mesorregiões (contorno laranja tracejado)
+        </label>
+        <label class="linha-check">
+          <input type="checkbox" id="chk-municipios" checked />
+          Municípios (contorno cinza claro)
+        </label>
+        <hr />
+        <label class="linha-check">
+          <input type="checkbox" id="chk-rotulos-estados" />
+          Rótulos dos estados
+        </label>
+        <label class="linha-check">
+          <input type="checkbox" id="chk-rotulos-mesorregioes" />
+          Rótulos das mesorregiões
+        </label>
+        <p class="dica">Passe o mouse sobre o mapa para ver o nome do estado e do município.</p>
+      </section>
+
+      <!-- Aba: Cores/Grupos -->
+      <section class="aba-conteudo oculto" id="aba-cores">
+        <h2>Seleção atual</h2>
+        <div id="selecao-info">Nenhum município selecionado.</div>
+        <div class="linha-cor">
+          <label for="cor-individual">Cor:</label>
+          <input type="color" id="cor-individual" value="#4f9dde" />
+          <button id="btn-aplicar-cor">Aplicar aos selecionados</button>
+        </div>
+        <button id="btn-remover-cor">Remover cor dos selecionados</button>
+
+        <hr />
+        <h2>Grupos de cores</h2>
+        <div class="linha-cor">
+          <input type="text" id="grupo-nome" placeholder="Nome do grupo" />
+          <input type="color" id="grupo-cor" value="#f2994a" />
+        </div>
+        <button id="btn-criar-grupo">Criar grupo com selecionados</button>
+        <ul id="lista-grupos"></ul>
+      </section>
+
+      <!-- Aba: Rotas/Marcadores -->
+      <section class="aba-conteudo oculto" id="aba-itens">
+        <h2>Rotas</h2>
+        <ul id="lista-rotas"><li class="dica">Nenhuma rota criada.</li></ul>
+        <hr />
+        <h2>Marcadores</h2>
+        <ul id="lista-marcadores"><li class="dica">Nenhum marcador criado.</li></ul>
+        <hr />
+        <h2>Textos/Observações</h2>
+        <ul id="lista-textos"><li class="dica">Nenhum texto criado.</li></ul>
+      </section>
+
+      <!-- Aba: Projeto -->
+      <section class="aba-conteudo oculto" id="aba-projeto">
+        <h2>Projeto</h2>
+        <p class="dica">As alterações são salvas automaticamente no navegador (localStorage).</p>
+        <button id="btn-exportar-json">⬇️ Exportar projeto (JSON)</button>
+        <label class="botao-arquivo">
+          ⬆️ Importar projeto (JSON)
+          <input type="file" id="input-importar-json" accept="application/json" />
+        </label>
+        <button id="btn-exportar-png">🖼️ Exportar imagem (PNG)</button>
+        <hr />
+        <button id="btn-resetar" class="perigo">🗑️ Limpar tudo</button>
+      </section>
+
+    </aside>
+  </div>
+  <!-- Modal genérico (substitui prompt()/confirm()/alert() nativos do navegador) -->
+  <div id="modal-overlay" class="oculto">
+    <div id="modal-caixa">
+      <h3 id="modal-titulo"></h3>
+      <p id="modal-mensagem"></p>
+      <input type="text" id="modal-input" class="oculto" />
+      <div id="modal-botoes">
+        <button id="modal-cancelar" class="secundario">Cancelar</button>
+        <button id="modal-confirmar">OK</button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script src="script.js"></script>
+</body>
+</html>
