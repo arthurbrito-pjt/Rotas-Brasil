@@ -579,6 +579,7 @@ if (btnLogout) {
 // Expõe para o script principal
 window.AppColaboracao = {
   salvarRemoto: notificarAlteracaoLocal,
+  mostrarToast: mostrarToast,
   forcarCarregamentoNuvem: () => {
     get(ref(db, 'projeto/compartilhado')).then((snap) => {
       if (snap.exists() && window.AppMapa?.aplicarEstadoRemoto) {

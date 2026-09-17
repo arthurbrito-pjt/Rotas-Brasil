@@ -36,7 +36,9 @@ let linhaRotaTemp = null;
 let estadoFiltroAtual = null;       // código do estado (UF) em foco, ou null = visão geral
 
 // Índices de dados carregados
-const municipiosPorCodigo = new Map(); // codigo -> { feature, layer, nome, uf_sigla }
+const municipiosPorCodigo = new Map(); // codigo -> { feature, layer, nome, uf_sigla, meso_codigo, meso_nome }
+const municipiosPorMesorregiao = new Map(); // meso_codigo -> Set de codigos de municipios
+const mesorregioesInfo = new Map();         // meso_codigo -> { codigo, nome, uf_codigo, uf_sigla }
 let listaBuscaMunicipios = [];
 const boundsPorUF = new Map();         // código da UF -> L.LatLngBounds
 let boundsBrasil = null;
@@ -234,7 +236,30 @@ async function carregarCamadas() {
     style: estiloMunicipio,
     onEachFeature: (feature, layer) => {
       const p = feature.properties;
-      municipiosPorCodigo.set(p.codigo, { feature, layer, nome: p.nome, uf_sigla: p.uf_sigla });
+      municipiosPorCodigo.set(p.codigo, {
+        feature,
+        layer,
+        nome: p.nome,
+        uf_sigla: p.uf_sigla,
+        meso_codigo: p.meso_codigo,
+        meso_nome: p.meso_nome,
+      });
+
+      if (p.meso_codigo) {
+        if (!municipiosPorMesorregiao.has(p.meso_codigo)) {
+          municipiosPorMesorregiao.set(p.meso_codigo, new Set());
+        }
+        municipiosPorMesorregiao.get(p.meso_codigo).add(p.codigo);
+
+        if (!mesorregioesInfo.has(p.meso_codigo)) {
+          mesorregioesInfo.set(p.meso_codigo, {
+            codigo: p.meso_codigo,
+            nome: p.meso_nome,
+            uf_codigo: p.uf_codigo,
+            uf_sigla: p.uf_sigla,
+          });
+        }
+      }
 
       layer.bindTooltip(`${p.nome} — ${p.uf_sigla}`, {
         sticky: true,
@@ -242,15 +267,49 @@ async function carregarCamadas() {
       });
 
       layer.on('click', (e) => {
+        if (foraDoFiltro(feature)) return; // fora do estado filtrado: ignora o clique
+        L.DomEvent.stopPropagation(e);
+
+        // Modo Conta-Gotas (Pipeta)
+        if (modoAtual === 'pipeta') {
+          const cor = corDoMunicipio(p.codigo);
+          if (cor) {
+            document.getElementById('cor-individual').value = cor;
+            if (window.AppColaboracao?.mostrarToast) {
+              window.AppColaboracao.mostrarToast(`Cor ${cor} copiada de ${p.nome}!`);
+            }
+          } else {
+            if (window.AppColaboracao?.mostrarToast) {
+              window.AppColaboracao.mostrarToast(`${p.nome} não tem cor atribuída.`);
+            }
+          }
+          definirModo('selecionar');
+          return;
+        }
+
+        // Modo Mesorregião (botão no topo ativo ou segurando a tecla Alt)
+        if (modoAtual === 'mesorregiao' || (e.originalEvent && e.originalEvent.altKey)) {
+          if (p.meso_codigo) {
+            const acumular = multiSelecaoAtiva || (e.originalEvent && e.originalEvent.shiftKey);
+            selecionarMesorregiao(p.meso_codigo, acumular);
+            const selectMeso = document.getElementById('select-mesorregiao');
+            if (selectMeso) selectMeso.value = p.meso_codigo;
+          }
+          return;
+        }
+
+        // Modo Seleção Comum
         if (modoAtual === 'selecionar') {
-          if (foraDoFiltro(feature)) return; // fora do estado filtrado: ignora o clique
-          L.DomEvent.stopPropagation(e);
           if (e.originalEvent && e.originalEvent.shiftKey) {
             selecionados.add(p.codigo);
             repintarMunicipio(p.codigo);
             atualizarPainelSelecao();
           } else {
             alternarSelecaoMunicipio(p.codigo);
+          }
+          if (p.meso_codigo) {
+            const selectMeso = document.getElementById('select-mesorregiao');
+            if (selectMeso) selectMeso.value = p.meso_codigo;
           }
         }
       });
@@ -326,6 +385,10 @@ async function carregarCamadas() {
   // Por padrão os rótulos ficam ocultos (poluem o mapa com 5.570 municípios)
   mapa.removeLayer(camadaRotulosEstados);
   mapa.removeLayer(camadaRotulosMesorregioes);
+
+  // Preenche o seletor de mesorregiões e paleta inicial
+  atualizarSelectMesorregioes();
+  atualizarPaletaCoresUsadas();
 }
 
 // ---------------------------------------------------------------------------
@@ -374,16 +437,24 @@ function atualizarPainelSelecao() {
 async function aplicarCorSelecionados() {
   if (selecionados.size === 0) { await modalAlerta('Selecione ao menos um município.'); return; }
   const cor = document.getElementById('cor-individual').value;
-  selecionados.forEach((cod) => coresIndividuais.set(cod, cor));
+  selecionados.forEach((cod) => {
+    municipioParaGrupo.delete(cod);
+    coresIndividuais.set(cod, cor);
+  });
   repintarTodosMunicipios();
   salvarProjeto();
+  atualizarPaletaCoresUsadas();
 }
 
 async function removerCorSelecionados() {
   if (selecionados.size === 0) { await modalAlerta('Selecione ao menos um município.'); return; }
-  selecionados.forEach((cod) => coresIndividuais.delete(cod));
+  selecionados.forEach((cod) => {
+    coresIndividuais.delete(cod);
+    municipioParaGrupo.delete(cod);
+  });
   repintarTodosMunicipios();
   salvarProjeto();
+  atualizarPaletaCoresUsadas();
 }
 
 async function criarGrupoComSelecionados() {
@@ -401,6 +472,7 @@ async function criarGrupoComSelecionados() {
   renderizarListaGrupos();
   repintarTodosMunicipios();
   salvarProjeto();
+  atualizarPaletaCoresUsadas();
 }
 
 async function excluirGrupo(idGrupo) {
@@ -410,6 +482,7 @@ async function excluirGrupo(idGrupo) {
   renderizarListaGrupos();
   repintarTodosMunicipios();
   salvarProjeto();
+  atualizarPaletaCoresUsadas();
 }
 
 // Adiciona os municípios atualmente selecionados a um grupo já existente
@@ -423,6 +496,7 @@ async function adicionarSelecionadosAoGrupo(idGrupo) {
   renderizarListaGrupos();
   repintarTodosMunicipios();
   salvarProjeto();
+  atualizarPaletaCoresUsadas();
 }
 
 // Remove os municípios selecionados de qualquer grupo ao qual pertençam,
@@ -433,6 +507,7 @@ async function removerSelecionadosDosGrupos() {
   renderizarListaGrupos();
   repintarTodosMunicipios();
   salvarProjeto();
+  atualizarPaletaCoresUsadas();
 }
 
 function selecionarMunicipiosDoGrupo(idGrupo) {
@@ -467,17 +542,219 @@ function renderizarListaGrupos() {
     const li = document.createElement('li');
     li.className = 'item-lista';
     li.innerHTML = `
-      <span class="amostra-cor" style="background:${g.cor}"></span>
-      <span class="item-nome" title="${g.nome}">${g.nome} (${qtd})</span>
+      <input type="color" class="input-cor-grupo" value="${g.cor}" title="Alterar cor do grupo" />
+      <span class="item-nome" title="${g.nome} (duplo clique para renomear)">${g.nome} (${qtd})</span>
+      <button data-acao="editar" title="Editar nome do grupo">✏️</button>
       <button data-acao="adicionar" title="Adicionar selecionados a este grupo">➕</button>
       <button data-acao="ir" title="Selecionar e centralizar">🎯</button>
       <button data-acao="excluir" title="Excluir grupo">🗑️</button>
     `;
+
+    // Alteração de cor do grupo em tempo real
+    const inputCor = li.querySelector('.input-cor-grupo');
+    inputCor.addEventListener('input', (e) => {
+      g.cor = e.target.value;
+      repintarTodosMunicipios();
+    });
+    inputCor.addEventListener('change', (e) => {
+      g.cor = e.target.value;
+      repintarTodosMunicipios();
+      salvarProjeto();
+      atualizarPaletaCoresUsadas();
+    });
+
+    // Edição de nome do grupo
+    const fnEditarNome = async () => {
+      const novoNome = await modalPrompt('Editar nome do grupo:', g.nome);
+      if (novoNome !== null && novoNome.trim() !== '') {
+        g.nome = novoNome.trim();
+        renderizarListaGrupos();
+        salvarProjeto();
+      }
+    };
+    li.querySelector('[data-acao="editar"]').onclick = fnEditarNome;
+    li.querySelector('.item-nome').ondblclick = fnEditarNome;
+
     li.querySelector('[data-acao="adicionar"]').onclick = () => adicionarSelecionadosAoGrupo(g.id);
     li.querySelector('[data-acao="ir"]').onclick = () => selecionarMunicipiosDoGrupo(g.id);
     li.querySelector('[data-acao="excluir"]').onclick = () => excluirGrupo(g.id);
     ul.appendChild(li);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Ações Rápidas por Mesorregião
+// ---------------------------------------------------------------------------
+
+function atualizarSelectMesorregioes() {
+  const select = document.getElementById('select-mesorregiao');
+  if (!select) return;
+  const valorAnterior = select.value;
+  select.innerHTML = '<option value="">Escolha uma mesorregião...</option>';
+
+  const lista = Array.from(mesorregioesInfo.values())
+    .filter((m) => !estadoFiltroAtual || m.uf_codigo === estadoFiltroAtual)
+    .sort((a, b) => {
+      if (a.uf_sigla !== b.uf_sigla) return a.uf_sigla.localeCompare(b.uf_sigla);
+      return a.nome.localeCompare(b.nome, 'pt-BR');
+    });
+
+  lista.forEach((info) => {
+    const qtd = municipiosPorMesorregiao.get(info.codigo)?.size || 0;
+    const opt = document.createElement('option');
+    opt.value = info.codigo;
+    opt.textContent = `${info.nome} — ${info.uf_sigla} (${qtd} mun.)`;
+    select.appendChild(opt);
+  });
+
+  if (valorAnterior && mesorregioesInfo.has(valorAnterior)) {
+    select.value = valorAnterior;
+  }
+}
+
+function selecionarMesorregiao(mesoCodigo, acumular = false) {
+  const codigos = municipiosPorMesorregiao.get(mesoCodigo);
+  if (!codigos) return;
+  if (!acumular) {
+    selecionados.clear();
+  }
+  codigos.forEach((cod) => {
+    const m = municipiosPorCodigo.get(cod);
+    if (m && !foraDoFiltro(m.feature)) {
+      selecionados.add(cod);
+    }
+  });
+  repintarTodosMunicipios();
+  atualizarPainelSelecao();
+  ajustarVisaoParaSelecionados();
+}
+
+function pintarMesorregiao(mesoCodigo, cor) {
+  const codigos = municipiosPorMesorregiao.get(mesoCodigo);
+  if (!codigos) return;
+  codigos.forEach((cod) => {
+    municipioParaGrupo.delete(cod);
+    coresIndividuais.set(cod, cor);
+  });
+  repintarTodosMunicipios();
+  salvarProjeto();
+  atualizarPaletaCoresUsadas();
+}
+
+// ---------------------------------------------------------------------------
+// Pipeta (Conta-gotas) e Seleção por Cores Iguais
+// ---------------------------------------------------------------------------
+
+function coletarCoresEmUso() {
+  const contagem = new Map();
+  municipiosPorCodigo.forEach((item, cod) => {
+    const cor = corDoMunicipio(cod);
+    if (cor) {
+      const corNorm = cor.toLowerCase();
+      contagem.set(corNorm, (contagem.get(corNorm) || 0) + 1);
+    }
+  });
+  return contagem;
+}
+
+function atualizarPaletaCoresUsadas() {
+  const container = document.getElementById('paleta-cores-usadas');
+  if (!container) return;
+  const cores = coletarCoresEmUso();
+
+  container.innerHTML = '';
+  if (cores.size === 0) {
+    container.innerHTML = '<span class="dica" style="margin:0;">Nenhuma cor em uso no mapa.</span>';
+    return;
+  }
+
+  cores.forEach((qtd, cor) => {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'swatch-item';
+    btn.title = `Cor ${cor} (${qtd} municípios)\nClique: Definir como cor no seletor\nShift+Clique ou Duplo clique: Selecionar municípios com esta cor`;
+    btn.innerHTML = `
+      <span class="swatch-cor-bolinha" style="background:${cor}"></span>
+      <span>${cor}</span>
+      <span class="swatch-qtd">(${qtd})</span>
+    `;
+
+    btn.addEventListener('click', (e) => {
+      if (e.shiftKey) {
+        selecionarMunicipiosComMesmaCor(cor);
+      } else {
+        document.getElementById('cor-individual').value = cor;
+        if (window.AppColaboracao?.mostrarToast) {
+          window.AppColaboracao.mostrarToast(`Cor ${cor} pronta no seletor!`);
+        }
+      }
+    });
+
+    btn.addEventListener('dblclick', () => {
+      selecionarMunicipiosComMesmaCor(cor);
+    });
+
+    container.appendChild(btn);
+  });
+}
+
+function copiarCorDoSelecionado() {
+  if (selecionados.size === 0) {
+    modalAlerta('Selecione ao menos um município no mapa para copiar a cor dele.');
+    return;
+  }
+  const primeiroCod = selecionados.values().next().value;
+  const cor = corDoMunicipio(primeiroCod);
+  if (cor) {
+    document.getElementById('cor-individual').value = cor;
+    const m = municipiosPorCodigo.get(primeiroCod);
+    if (window.AppColaboracao?.mostrarToast) {
+      window.AppColaboracao.mostrarToast(`Cor ${cor} copiada de ${m ? m.nome : primeiroCod}!`);
+    }
+  } else {
+    modalAlerta('O município selecionado não possui cor aplicada.');
+  }
+}
+
+function selecionarMunicipiosComMesmaCor(corAlvo) {
+  if (!corAlvo) {
+    if (selecionados.size > 0) {
+      const primeiroCod = selecionados.values().next().value;
+      corAlvo = corDoMunicipio(primeiroCod) || document.getElementById('cor-individual').value;
+    } else {
+      corAlvo = document.getElementById('cor-individual').value;
+    }
+  }
+
+  if (!corAlvo) return;
+  corAlvo = corAlvo.toLowerCase();
+
+  let count = 0;
+  municipiosPorCodigo.forEach((item, cod) => {
+    if (foraDoFiltro(item.feature)) return;
+    const cor = corDoMunicipio(cod);
+    if (cor && cor.toLowerCase() === corAlvo) {
+      selecionados.add(cod);
+      count++;
+    }
+  });
+
+  if (count === 0) {
+    if (window.AppColaboracao?.mostrarToast) {
+      window.AppColaboracao.mostrarToast(`Nenhum município encontrado com a cor ${corAlvo}.`);
+    } else {
+      modalAlerta(`Nenhum município encontrado com a cor ${corAlvo}.`);
+    }
+    return;
+  }
+
+  repintarTodosMunicipios();
+  atualizarPainelSelecao();
+  ajustarVisaoParaSelecionados();
+
+  if (window.AppColaboracao?.mostrarToast) {
+    window.AppColaboracao.mostrarToast(`${count} município(s) selecionado(s) com a cor ${corAlvo}!`);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -490,6 +767,11 @@ function definirModo(novoModo) {
 
   modoAtual = novoModo;
 
+  const containerMapa = mapa.getContainer();
+  if (containerMapa) {
+    containerMapa.classList.toggle('cursor-pipeta', novoModo === 'pipeta');
+  }
+
   document.querySelectorAll('.tool-btn[data-modo]').forEach((btn) => btn.classList.remove('ativo'));
   const botaoAtivo = document.querySelector(`.tool-btn[data-modo="${novoModo}"]`);
   if (botaoAtivo) botaoAtivo.classList.add('ativo');
@@ -497,6 +779,8 @@ function definirModo(novoModo) {
   const indicador = document.getElementById('modo-indicador');
   const nomesModo = {
     selecionar: 'Selecionar município(s)',
+    mesorregiao: 'Mesorregião — clique para selecionar a mesorregião inteira',
+    pipeta: 'Conta-gotas — clique em um município para copiar sua cor',
     rota: 'Desenhando rota — clique para adicionar pontos',
     marcador: 'Clique no mapa para adicionar um marcador',
     texto: 'Clique no mapa para inserir um texto',
@@ -848,6 +1132,7 @@ function aplicarEstadoDoObjeto(obj, { limparSelecao = false } = {}) {
   renderizarListaTextos();
   repintarTodosMunicipios();
   atualizarPainelSelecao();
+  atualizarPaletaCoresUsadas();
 }
 
 // ---------------------------------------------------------------------------
@@ -971,6 +1256,7 @@ function aplicarEstadoRemoto(remoto) {
   // dos municípios que o usuário local tem selecionados!
   repintarTodosMunicipios();
   atualizarPainelSelecao();
+  atualizarPaletaCoresUsadas();
 }
 
 function carregarProjetoSalvo() {
@@ -1018,6 +1304,7 @@ async function resetarTudo() {
   renderizarListaTextos();
   repintarTodosMunicipios();
   atualizarPainelSelecao();
+  atualizarPaletaCoresUsadas();
   localStorage.removeItem(CHAVE_LOCALSTORAGE);
   salvarProjeto();
 }
@@ -1122,6 +1409,7 @@ document.getElementById('filtro-estado').addEventListener('change', (e) => {
   repintarTodosMunicipios();
   camadaEstadosGeo.setStyle(estiloEstado);
   camadaMesorregioesGeo.setStyle(estiloMesorregiao);
+  atualizarSelectMesorregioes();
 });
 
 // ---------------------------------------------------------------------------
@@ -1160,11 +1448,19 @@ document.querySelectorAll('.aba-btn').forEach((btn) => {
 });
 
 document.getElementById('btn-selecionar').setAttribute('data-modo', 'selecionar');
+document.getElementById('btn-mesorregiao').setAttribute('data-modo', 'mesorregiao');
+document.getElementById('btn-pipeta').setAttribute('data-modo', 'pipeta');
 document.getElementById('btn-rota').setAttribute('data-modo', 'rota');
 document.getElementById('btn-marcador').setAttribute('data-modo', 'marcador');
 document.getElementById('btn-texto').setAttribute('data-modo', 'texto');
 
 document.getElementById('btn-selecionar').addEventListener('click', () => definirModo('selecionar'));
+document.getElementById('btn-mesorregiao').addEventListener('click', () => {
+  definirModo(modoAtual === 'mesorregiao' ? 'selecionar' : 'mesorregiao');
+});
+document.getElementById('btn-pipeta').addEventListener('click', () => {
+  definirModo(modoAtual === 'pipeta' ? 'selecionar' : 'pipeta');
+});
 document.getElementById('btn-rota').addEventListener('click', () => definirModo('rota'));
 document.getElementById('btn-marcador').addEventListener('click', () => definirModo('marcador'));
 document.getElementById('btn-texto').addEventListener('click', () => definirModo('texto'));
@@ -1179,6 +1475,26 @@ document.getElementById('btn-multi').addEventListener('click', (e) => {
 
 document.getElementById('btn-aplicar-cor').addEventListener('click', aplicarCorSelecionados);
 document.getElementById('btn-remover-cor').addEventListener('click', removerCorSelecionados);
+document.getElementById('btn-copiar-cor').addEventListener('click', copiarCorDoSelecionado);
+document.getElementById('btn-selecionar-mesma-cor').addEventListener('click', () => selecionarMunicipiosComMesmaCor());
+
+document.getElementById('btn-selecionar-meso').addEventListener('click', () => {
+  const cod = document.getElementById('select-mesorregiao').value;
+  if (!cod) { modalAlerta('Selecione uma mesorregião na lista.'); return; }
+  selecionarMesorregiao(cod, multiSelecaoAtiva);
+});
+
+document.getElementById('btn-pintar-meso').addEventListener('click', () => {
+  const cod = document.getElementById('select-mesorregiao').value;
+  if (!cod) { modalAlerta('Selecione uma mesorregião na lista.'); return; }
+  const cor = document.getElementById('cor-individual').value;
+  pintarMesorregiao(cod, cor);
+  const info = mesorregioesInfo.get(cod);
+  if (window.AppColaboracao?.mostrarToast) {
+    window.AppColaboracao.mostrarToast(`Mesorregião ${info ? info.nome : ''} pintada com ${cor}!`);
+  }
+});
+
 document.getElementById('btn-criar-grupo').addEventListener('click', criarGrupoComSelecionados);
 document.getElementById('btn-remover-grupo').addEventListener('click', removerSelecionadosDosGrupos);
 
@@ -1216,7 +1532,12 @@ window.AppMapa = {
   salvarProjeto,
   repintarTodosMunicipios,
   atualizarPainelSelecao,
-  limparCamadasDinamicas
+  limparCamadasDinamicas,
+  selecionarMesorregiao,
+  pintarMesorregiao,
+  selecionarMunicipiosComMesmaCor,
+  atualizarPaletaCoresUsadas,
+  copiarCorDoSelecionado
 };
 
 // ---------------------------------------------------------------------------

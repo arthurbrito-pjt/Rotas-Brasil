@@ -349,6 +349,16 @@ ul#lista-grupos, ul#lista-rotas, ul#lista-marcadores, ul#lista-textos {
   white-space: nowrap;
 }
 
+.item-lista input[type="color"].input-cor-grupo {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid var(--cor-borda);
+  border-radius: 4px;
+  cursor: pointer;
+  flex: 0 0 auto;
+}
+
 .item-lista button {
   border: none;
   background: transparent;
@@ -357,6 +367,126 @@ ul#lista-grupos, ul#lista-rotas, ul#lista-marcadores, ul#lista-textos {
   padding: 2px 4px;
 }
 .item-lista button:hover { opacity: 0.6; }
+
+/* Bloco de Ações Rápidas por Mesorregião */
+.bloco-acao-rapida {
+  background: #ffffff;
+  border: 1px solid var(--cor-borda);
+  border-radius: 6px;
+  padding: 10px;
+  margin: 12px 0;
+}
+.bloco-acao-rapida h3 {
+  font-size: 13px;
+  margin: 0 0 6px 0;
+  font-weight: 600;
+  color: var(--cor-texto);
+}
+.bloco-acao-rapida select {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--cor-borda);
+  border-radius: 6px;
+  font-size: 12px;
+  background: #fff;
+}
+.botoes-mesorregiao {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+.botoes-mesorregiao button {
+  flex: 1;
+  padding: 7px 6px !important;
+  font-size: 11px !important;
+  margin: 0 !important;
+  white-space: nowrap;
+}
+
+/* Botões em linha dupla */
+.botoes-linha-dupla {
+  display: flex;
+  gap: 6px;
+  margin: 4px 0;
+}
+.botoes-linha-dupla button {
+  flex: 1;
+  padding: 7px 6px !important;
+  font-size: 11px !important;
+  margin: 0 !important;
+  white-space: nowrap;
+}
+
+/* Seção de Cores em Uso no Mapa */
+.secao-cores-em-uso {
+  margin: 10px 0 6px 0;
+  padding-top: 8px;
+  border-top: 1px dashed var(--cor-borda);
+}
+
+.subtitulo-cores-usadas {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--cor-texto-suave);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+}
+
+.paleta-swatches {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-height: 28px;
+}
+
+.swatch-item {
+  display: inline-flex !important;
+  width: auto !important;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px !important;
+  margin: 0 !important;
+  background: #ffffff !important;
+  border: 1px solid var(--cor-borda) !important;
+  border-radius: 14px !important;
+  font-size: 11px !important;
+  font-weight: 600 !important;
+  color: var(--cor-texto) !important;
+  cursor: pointer;
+  transition: transform 0.12s ease, border-color 0.12s ease, box-shadow 0.12s ease;
+  user-select: none;
+}
+
+.swatch-item:hover {
+  transform: translateY(-1px);
+  border-color: var(--cor-primaria) !important;
+  box-shadow: 0 2px 5px rgba(0,0,0,0.12);
+}
+
+.swatch-cor-bolinha {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1px solid rgba(0,0,0,0.25);
+  flex-shrink: 0;
+  display: inline-block;
+}
+
+.swatch-item .swatch-qtd {
+  font-size: 10px;
+  color: var(--cor-texto-suave);
+  font-weight: 500;
+}
+
+/* Cursor de conta-gotas / pipeta no mapa */
+.cursor-pipeta,
+.cursor-pipeta .leaflet-interactive,
+.cursor-pipeta .leaflet-container {
+  cursor: crosshair !important;
+}
 
 /* ---------- Tooltips do Leaflet (hover) ---------- */
 .tooltip-municipio {

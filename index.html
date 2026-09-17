@@ -65,6 +65,8 @@
       <!-- Barra de ferramentas flutuante sobre o mapa -->
       <div id="toolbar">
         <button id="btn-selecionar" class="tool-btn ativo" title="Selecionar município(s)">🖱️ Selecionar</button>
+        <button id="btn-mesorregiao" class="tool-btn" title="Selecionar mesorregião inteira ao clicar">🗺️ Mesorregião</button>
+        <button id="btn-pipeta" class="tool-btn" title="Copiar cor do mapa (Conta-gotas)">🧪 Copiar cor</button>
         <button id="btn-multi" class="tool-btn" title="Selecionar vários municípios">🔲 Multi-seleção</button>
         <button id="btn-rota" class="tool-btn" title="Desenhar rota">📏 Rota</button>
         <button id="btn-marcador" class="tool-btn" title="Adicionar marcador">📍 Marcador</button>
@@ -124,7 +126,33 @@
           <input type="color" id="cor-individual" value="#4f9dde" />
           <button id="btn-aplicar-cor">Aplicar aos selecionados</button>
         </div>
+        <div class="botoes-linha-dupla">
+          <button id="btn-copiar-cor" class="secundario" title="Copiar a cor do município selecionado para o seletor">🧪 Copiar cor</button>
+          <button id="btn-selecionar-mesma-cor" class="secundario" title="Selecionar todos os municípios com esta mesma cor">🎨 Selecionar mesma cor</button>
+        </div>
         <button id="btn-remover-cor">Remover cor dos selecionados</button>
+
+        <div class="secao-cores-em-uso">
+          <span class="subtitulo-cores-usadas">Cores em uso no mapa:</span>
+          <div id="paleta-cores-usadas" class="paleta-swatches">
+            <span class="dica" style="margin:0;">Nenhuma cor em uso.</span>
+          </div>
+        </div>
+
+        <hr />
+        <div class="bloco-acao-rapida">
+          <h3>⚡ Selecionar / Pintar Mesorregião</h3>
+          <p class="dica" style="margin-top:0;">Dica: você também pode usar o botão <b>🗺️ Mesorregião</b> no topo do mapa ou segurar <b>Alt</b> e clicar em qualquer município para pegar a mesorregião inteira!</p>
+          <div class="linha-cor">
+            <select id="select-mesorregiao" style="flex:1;">
+              <option value="">Escolha uma mesorregião...</option>
+            </select>
+          </div>
+          <div class="botoes-mesorregiao">
+            <button id="btn-selecionar-meso" class="secundario" title="Selecionar todos os municípios desta mesorregião">Selecionar todos</button>
+            <button id="btn-pintar-meso" title="Pintar todos os municípios com a cor individual acima">Pintar mesorregião</button>
+          </div>
+        </div>
 
         <hr />
         <h2>Grupos de cores</h2>
