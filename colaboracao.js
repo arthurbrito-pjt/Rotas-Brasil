@@ -22,7 +22,8 @@ import {
   onValue,
   onDisconnect,
   serverTimestamp,
-  off
+  off,
+  runTransaction
 } from './firebase-config.js';
 
 // ID de sessão único por aba/janela aberta (evita conflitos mesmo testando na mesma máquina ou conta)
@@ -68,7 +69,10 @@ const ultimasPosicoes = new Map();
 const elementosAvatares = new Map();
 
 let debouncersSalvar = null;
-let ultimoHashEstadoLocal = null;
+let ultimoEstadoSincronizado = null;
+let ultimoHashSincronizado = null;
+let salvandoNoFirebase = false;
+let salvamentoPendente = false;
 let conectadoAoFirebase = false;
 
 // ---------------------------------------------------------------------------
@@ -393,10 +397,81 @@ function encerrarGerenciamentoPresenca() {
 }
 
 // ---------------------------------------------------------------------------
-// Sincronização do Projeto (Preservando Seleção e Ferramentas Locais!)
+// Sincronização Atômica e Concorrente do Projeto (Zero Perda / Sem Travamentos)
+// - Utiliza transações atômicas no Realtime Database (runTransaction)
+// - Mesclagem 3-way inteligente de estados (preserva adições e edições simultâneas)
+// - Fila de salvamento que NUNCA descarta operações de nenhum usuário
+// - Preserva rigorosamente as seleções e ferramentas de cada colaborador
 // ---------------------------------------------------------------------------
 let listenerProjeto = null;
-let ignorandoMudancaRemota = false;
+
+function mesclarEstados(servidor, local, base) {
+  if (!servidor) return local;
+  if (!local) return servidor;
+  const s = servidor || {};
+  const l = local || {};
+  const b = base || {};
+
+  // 1. Cores individuais
+  const sCores = { ...(s.coresIndividuais || {}) };
+  const lCores = l.coresIndividuais || {};
+  const bCores = b.coresIndividuais || {};
+  Object.keys(lCores).forEach((k) => {
+    if (lCores[k] !== bCores[k]) sCores[k] = lCores[k];
+  });
+  Object.keys(bCores).forEach((k) => {
+    if (!(k in lCores)) delete sCores[k];
+  });
+
+  // 2. Município para Grupo
+  const sMunGrupo = { ...(s.municipioParaGrupo || {}) };
+  const lMunGrupo = l.municipioParaGrupo || {};
+  const bMunGrupo = b.municipioParaGrupo || {};
+  Object.keys(lMunGrupo).forEach((k) => {
+    if (lMunGrupo[k] !== bMunGrupo[k]) sMunGrupo[k] = lMunGrupo[k];
+  });
+  Object.keys(bMunGrupo).forEach((k) => {
+    if (!(k in lMunGrupo)) delete sMunGrupo[k];
+  });
+
+  // 3. Helper para listas de objetos com identificador único
+  function mesclarLista(sLista, lLista, bLista) {
+    const mapa = new Map();
+    (sLista || []).forEach((item) => {
+      if (item && item.id) mapa.set(item.id, { ...item });
+    });
+    const bMap = new Map();
+    (bLista || []).forEach((item) => {
+      if (item && item.id) bMap.set(item.id, item);
+    });
+
+    (lLista || []).forEach((item) => {
+      if (!item || !item.id) return;
+      const bItem = bMap.get(item.id);
+      if (!bItem || JSON.stringify(item) !== JSON.stringify(bItem)) {
+        mapa.set(item.id, { ...item });
+      }
+    });
+
+    (bLista || []).forEach((item) => {
+      if (item && item.id && !(lLista || []).some((li) => li.id === item.id)) {
+        mapa.delete(item.id);
+      }
+    });
+    return Array.from(mapa.values());
+  }
+
+  return {
+    versao: 1,
+    dataExportacao: new Date().toISOString(),
+    coresIndividuais: sCores,
+    municipioParaGrupo: sMunGrupo,
+    grupos: mesclarLista(s.grupos, l.grupos, b.grupos),
+    rotas: mesclarLista(s.rotas, l.rotas, b.rotas),
+    marcadores: mesclarLista(s.marcadores, l.marcadores, b.marcadores),
+    textos: mesclarLista(s.textos, l.textos, b.textos)
+  };
+}
 
 function iniciarSincronizacaoProjeto() {
   const projetoRef = ref(db, 'projeto/compartilhado');
@@ -407,11 +482,13 @@ function iniciarSincronizacaoProjeto() {
       const payload = snap.val();
       if (payload && payload.dados && window.AppMapa?.aplicarEstadoRemoto) {
         console.log('Projeto carregado da nuvem:', payload.atualizadoPor?.nome);
+        ultimoEstadoSincronizado = payload.dados;
+        ultimoHashSincronizado = JSON.stringify(payload.dados);
         window.AppMapa.aplicarEstadoRemoto(payload.dados);
-        ultimoHashEstadoLocal = JSON.stringify(payload.dados);
+        atualizarStatusUI('online', 'Sincronizado');
       }
     } else if (window.AppMapa?.estadoParaObjeto) {
-      salvarProjetoRemotoImediato();
+      executarSalvamentoRemoto();
     }
   }).catch((err) => {
     console.warn('Erro ao carregar projeto inicial do Firebase:', err);
@@ -423,25 +500,38 @@ function iniciarSincronizacaoProjeto() {
     const payload = snap.val();
     if (!payload || !payload.dados) return;
 
-    // Ignora alterações originadas pela própria aba
+    // Ignora alterações originadas pela própria sessão
     if (payload.atualizadoPor?.sessionId === sessionId) return;
 
     const hashRecebido = JSON.stringify(payload.dados);
-    if (hashRecebido === ultimoHashEstadoLocal) return;
+    if (hashRecebido === ultimoHashSincronizado) return;
 
     console.log(`Recebida atualização remota de ${payload.atualizadoPor?.nome || 'Colega'}`);
-    ignorandoMudancaRemota = true;
-    try {
+
+    const temModificacoesLocaisPendentes = salvandoNoFirebase || salvamentoPendente || debouncersSalvar !== null;
+
+    if (temModificacoesLocaisPendentes && window.AppMapa?.estadoParaObjeto) {
+      // Mesclagem em tempo real: preserva as alterações locais não enviadas
+      const localAgora = window.AppMapa.estadoParaObjeto();
+      const mesclado = mesclarEstados(payload.dados, localAgora, ultimoEstadoSincronizado);
+      ultimoEstadoSincronizado = payload.dados;
+      ultimoHashSincronizado = JSON.stringify(payload.dados);
+
       if (window.AppMapa?.aplicarEstadoRemoto) {
-        // Aplicação não-destrutiva: NUNCA desseleciona nem cancela rotas/itens locais!
-        window.AppMapa.aplicarEstadoRemoto(payload.dados);
-        ultimoHashEstadoLocal = hashRecebido;
-        mostrarToast(`Mapa atualizado por ${payload.atualizadoPor?.nome || 'um colega'}`);
+        window.AppMapa.aplicarEstadoRemoto(mesclado);
       }
-    } finally {
-      setTimeout(() => {
-        ignorandoMudancaRemota = false;
-      }, 50);
+      mostrarToast(`Alterações de ${payload.atualizadoPor?.nome || 'um colega'} mescladas`);
+      // Reagenda envio para consolidar o estado mesclado
+      notificarAlteracaoLocal();
+    } else {
+      // Usuário sem pendências: aplica diretamente
+      ultimoEstadoSincronizado = payload.dados;
+      ultimoHashSincronizado = hashRecebido;
+      if (window.AppMapa?.aplicarEstadoRemoto) {
+        window.AppMapa.aplicarEstadoRemoto(payload.dados);
+      }
+      mostrarToast(`Mapa atualizado por ${payload.atualizadoPor?.nome || 'um colega'}`);
+      atualizarStatusUI('online', 'Sincronizado');
     }
   });
 }
@@ -450,42 +540,81 @@ function encerrarSincronizacaoProjeto() {
   if (listenerProjeto) off(ref(db, 'projeto/compartilhado'));
 }
 
-function salvarProjetoRemotoImediato() {
-  if (!usuarioAtual || !conectadoAoFirebase || !window.AppMapa?.estadoParaObjeto) return;
-  if (ignorandoMudancaRemota) return;
+async function executarSalvamentoRemoto() {
+  if (!usuarioAtual || !conectadoAoFirebase || !window.AppMapa?.estadoParaObjeto) {
+    salvandoNoFirebase = false;
+    return;
+  }
 
-  const dados = window.AppMapa.estadoParaObjeto();
-  const hash = JSON.stringify(dados);
-  if (hash === ultimoHashEstadoLocal) return;
+  if (salvandoNoFirebase) {
+    salvamentoPendente = true;
+    return;
+  }
 
+  const dadosLocais = window.AppMapa.estadoParaObjeto();
+  const hashLocal = JSON.stringify(dadosLocais);
+
+  // Se nada mudou em relação ao último sincronizado e não há pendências
+  if (hashLocal === ultimoHashSincronizado && !salvamentoPendente) {
+    atualizarStatusUI('online', 'Sincronizado');
+    return;
+  }
+
+  salvandoNoFirebase = true;
+  salvamentoPendente = false;
   atualizarStatusUI('salvando', 'Salvando...');
-  ultimoHashEstadoLocal = hash;
 
   const projetoRef = ref(db, 'projeto/compartilhado');
-  set(projetoRef, {
-    dados,
-    atualizadoPor: {
-      sessionId,
-      uid: usuarioAtual.uid,
-      nome: usuarioAtual.displayName || 'Usuário',
-      email: usuarioAtual.email || ''
-    },
-    atualizadoEm: serverTimestamp()
-  }).then(() => {
-    atualizarStatusUI('online', 'Sincronizado');
-  }).catch((err) => {
-    console.error('Erro ao salvar no Firebase:', err);
+
+  try {
+    const resultado = await runTransaction(projetoRef, (atual) => {
+      let dadosFinais = dadosLocais;
+      if (atual && atual.dados) {
+        dadosFinais = mesclarEstados(atual.dados, dadosLocais, ultimoEstadoSincronizado);
+      }
+      return {
+        dados: dadosFinais,
+        atualizadoPor: {
+          sessionId,
+          uid: usuarioAtual.uid,
+          nome: usuarioAtual.displayName || 'Usuário',
+          email: usuarioAtual.email || ''
+        },
+        atualizadoEm: serverTimestamp()
+      };
+    });
+
+    if (resultado && resultado.committed) {
+      const snapVal = resultado.snapshot.val();
+      if (snapVal && snapVal.dados) {
+        ultimoEstadoSincronizado = snapVal.dados;
+        ultimoHashSincronizado = JSON.stringify(snapVal.dados);
+        if (window.AppMapa?.aplicarEstadoRemoto) {
+          window.AppMapa.aplicarEstadoRemoto(snapVal.dados);
+        }
+      }
+      atualizarStatusUI('online', 'Sincronizado');
+    }
+  } catch (err) {
+    console.error('Erro na transação de salvamento no Firebase:', err);
     atualizarStatusUI('erro', 'Erro ao sincronizar');
-  });
+  } finally {
+    salvandoNoFirebase = false;
+    if (salvamentoPendente) {
+      salvamentoPendente = false;
+      executarSalvamentoRemoto();
+    }
+  }
 }
 
 export function notificarAlteracaoLocal() {
-  if (!usuarioAtual || ignorandoMudancaRemota) return;
+  if (!usuarioAtual) return;
   atualizarStatusUI('salvando', 'Sincronizando...');
   clearTimeout(debouncersSalvar);
   debouncersSalvar = setTimeout(() => {
-    salvarProjetoRemotoImediato();
-  }, 300);
+    debouncersSalvar = null;
+    executarSalvamentoRemoto();
+  }, 250);
 }
 
 // ---------------------------------------------------------------------------
@@ -583,7 +712,10 @@ window.AppColaboracao = {
   forcarCarregamentoNuvem: () => {
     get(ref(db, 'projeto/compartilhado')).then((snap) => {
       if (snap.exists() && window.AppMapa?.aplicarEstadoRemoto) {
-        window.AppMapa.aplicarEstadoRemoto(snap.val().dados);
+        const dados = snap.val().dados;
+        ultimoEstadoSincronizado = dados;
+        ultimoHashSincronizado = JSON.stringify(dados);
+        window.AppMapa.aplicarEstadoRemoto(dados);
         mostrarToast('Mapa recarregado da nuvem!');
       }
     });

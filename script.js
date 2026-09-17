@@ -44,6 +44,8 @@ const boundsPorUF = new Map();         // código da UF -> L.LatLngBounds
 let boundsBrasil = null;
 let camadaEstadosGeo = null;
 let camadaMesorregioesGeo = null;
+const rotulosEstados = []; // [{ uf_codigo, marker }]
+const rotulosMesorregioes = []; // [{ uf_codigo, marker }]
 
 let contadorId = 1;
 function proximoId() { return 'id' + (contadorId++) + '_' + Date.now().toString(36); }
@@ -183,6 +185,7 @@ function estiloMunicipio(feature) {
   if (oculto) {
     return {
       renderer: rendererCompartilhado,
+      stroke: false,
       fill: false,
       fillOpacity: 0,
       opacity: 0,
@@ -191,13 +194,14 @@ function estiloMunicipio(feature) {
   }
 
   // Se o contorno de municípios estiver desativado, apenas municípios sem cor e não selecionados
-  // ficam transparentes; os municípios com cor continuam 100% visíveis da mesma forma!
+  // ficam transparentes; os municípios com cor continuam 100% visíveis com seu preenchimento sem linhas!
   const temCor = !!cor;
   const visivel = exibirContornoMunicipios || temCor || selecionado;
 
   if (!visivel) {
     return {
       renderer: rendererCompartilhado,
+      stroke: false,
       fill: false,
       fillOpacity: 0,
       opacity: 0,
@@ -205,17 +209,20 @@ function estiloMunicipio(feature) {
     };
   }
 
+  const desenharBorda = selecionado || exibirContornoMunicipios;
+
   return {
     renderer: rendererCompartilhado,
+    stroke: desenharBorda,
+    color: selecionado
+      ? CORES.municipioContornoSelecionado
+      : CORES.municipioContorno,
+    weight: selecionado ? 2.5 : (exibirContornoMunicipios ? 0.8 : 0),
+    dashArray: selecionado ? '5,3' : null,
+    opacity: selecionado ? 1 : (exibirContornoMunicipios ? 1 : 0),
     fill: temCor,
     fillColor: cor || '#ffffff',
     fillOpacity: temCor ? 0.72 : 0,
-    color: selecionado
-      ? CORES.municipioContornoSelecionado
-      : (exibirContornoMunicipios ? CORES.municipioContorno : cor),
-    weight: selecionado ? 2.5 : (exibirContornoMunicipios ? 0.8 : (temCor ? 0.6 : 0)),
-    dashArray: selecionado ? '5,3' : null,
-    opacity: selecionado ? 1 : (exibirContornoMunicipios ? 1 : (temCor ? 0.72 : 0)),
   };
 }
 
@@ -381,10 +388,11 @@ async function carregarCamadas() {
   geoMesorregioes.features.forEach((f) => {
     const layerTemp = L.geoJSON(f);
     const centro = layerTemp.getBounds().getCenter();
-    L.marker(centro, {
+    const marker = L.marker(centro, {
       interactive: false,
       icon: L.divIcon({ className: 'rotulo-mapa', html: f.properties.nome, iconSize: null }),
-    }).addTo(camadaRotulosMesorregioes);
+    });
+    rotulosMesorregioes.push({ uf_codigo: f.properties.uf_codigo, marker });
   });
 
   // --- Estados (contorno preto, camada mais visível, apenas visual) -------
@@ -413,19 +421,84 @@ async function carregarCamadas() {
   geoEstados.features.forEach((f) => {
     const layerTemp = L.geoJSON(f);
     const centro = layerTemp.getBounds().getCenter();
-    L.marker(centro, {
+    const marker = L.marker(centro, {
       interactive: false,
       icon: L.divIcon({ className: 'rotulo-mapa', html: `<b>${f.properties.sigla}</b>`, iconSize: null }),
-    }).addTo(camadaRotulosEstados);
+    });
+    rotulosEstados.push({ uf_codigo: f.properties.codigo, marker });
   });
 
   // Por padrão os rótulos ficam ocultos (poluem o mapa com 5.570 municípios)
   mapa.removeLayer(camadaRotulosEstados);
   mapa.removeLayer(camadaRotulosMesorregioes);
+  atualizarRotulosVisiveis();
 
   // Preenche o seletor de mesorregiões e paleta inicial
   atualizarSelectMesorregioes();
   atualizarPaletaCoresUsadas();
+}
+
+function atualizarRotulosVisiveis() {
+  camadaRotulosEstados.clearLayers();
+  camadaRotulosMesorregioes.clearLayers();
+
+  const chkRotEstados = document.getElementById('chk-rotulos-estados');
+  const chkRotMeso = document.getElementById('chk-rotulos-mesorregioes');
+  const exibirEstados = chkRotEstados ? chkRotEstados.checked : false;
+  const exibirMeso = chkRotMeso ? chkRotMeso.checked : false;
+
+  if (exibirEstados) {
+    rotulosEstados.forEach((item) => {
+      if (!estadoFiltroAtual || item.uf_codigo === estadoFiltroAtual) {
+        camadaRotulosEstados.addLayer(item.marker);
+      }
+    });
+  }
+
+  if (exibirMeso) {
+    rotulosMesorregioes.forEach((item) => {
+      if (!estadoFiltroAtual || item.uf_codigo === estadoFiltroAtual) {
+        camadaRotulosMesorregioes.addLayer(item.marker);
+      }
+    });
+  }
+}
+
+function atualizarVisibilidadeItensUsuario() {
+  const bounds = estadoFiltroAtual ? boundsPorUF.get(estadoFiltroAtual) : null;
+
+  rotas.forEach((r) => {
+    if (!r.layer) return;
+    if (!bounds) {
+      if (!camadaRotas.hasLayer(r.layer)) camadaRotas.addLayer(r.layer);
+    } else {
+      const dentro = (r.pontos || []).some(([lat, lng]) => bounds.contains([lat, lng]));
+      if (dentro && !camadaRotas.hasLayer(r.layer)) camadaRotas.addLayer(r.layer);
+      else if (!dentro && camadaRotas.hasLayer(r.layer)) camadaRotas.removeLayer(r.layer);
+    }
+  });
+
+  marcadores.forEach((m) => {
+    if (!m.layer) return;
+    if (!bounds) {
+      if (!camadaMarcadores.hasLayer(m.layer)) camadaMarcadores.addLayer(m.layer);
+    } else {
+      const dentro = bounds.contains([m.lat, m.lng]);
+      if (dentro && !camadaMarcadores.hasLayer(m.layer)) camadaMarcadores.addLayer(m.layer);
+      else if (!dentro && camadaMarcadores.hasLayer(m.layer)) camadaMarcadores.removeLayer(m.layer);
+    }
+  });
+
+  textos.forEach((t) => {
+    if (!t.layer) return;
+    if (!bounds) {
+      if (!camadaTextos.hasLayer(t.layer)) camadaTextos.addLayer(t.layer);
+    } else {
+      const dentro = bounds.contains([t.lat, t.lng]);
+      if (dentro && !camadaTextos.hasLayer(t.layer)) camadaTextos.addLayer(t.layer);
+      else if (!dentro && camadaTextos.hasLayer(t.layer)) camadaTextos.removeLayer(t.layer);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -436,17 +509,21 @@ function alternarSelecaoMunicipio(codigo) {
   if (multiSelecaoAtiva) {
     if (selecionados.has(codigo)) selecionados.delete(codigo);
     else selecionados.add(codigo);
+    repintarMunicipio(codigo);
   } else {
+    const antigos = Array.from(selecionados);
     selecionados.clear();
     selecionados.add(codigo);
+    antigos.forEach((c) => repintarMunicipio(c));
+    repintarMunicipio(codigo);
   }
-  repintarTodosMunicipios();
   atualizarPainelSelecao();
 }
 
 function limparSelecao() {
+  const antigos = Array.from(selecionados);
   selecionados.clear();
-  repintarTodosMunicipios();
+  antigos.forEach((c) => repintarMunicipio(c));
   atualizarPainelSelecao();
 }
 
@@ -477,8 +554,8 @@ async function aplicarCorSelecionados() {
   selecionados.forEach((cod) => {
     municipioParaGrupo.delete(cod);
     coresIndividuais.set(cod, cor);
+    repintarMunicipio(cod);
   });
-  repintarTodosMunicipios();
   salvarProjeto();
   atualizarPaletaCoresUsadas();
 }
@@ -488,8 +565,8 @@ async function removerCorSelecionados() {
   selecionados.forEach((cod) => {
     coresIndividuais.delete(cod);
     municipioParaGrupo.delete(cod);
+    repintarMunicipio(cod);
   });
-  repintarTodosMunicipios();
   salvarProjeto();
   atualizarPaletaCoresUsadas();
 }
@@ -504,10 +581,10 @@ async function criarGrupoComSelecionados() {
   selecionados.forEach((cod) => {
     coresIndividuais.delete(cod); // grupo tem precedência ao ser criado
     municipioParaGrupo.set(cod, grupo.id);
+    repintarMunicipio(cod);
   });
   nomeInput.value = '';
   renderizarListaGrupos();
-  repintarTodosMunicipios();
   salvarProjeto();
   atualizarPaletaCoresUsadas();
 }
@@ -515,9 +592,15 @@ async function criarGrupoComSelecionados() {
 async function excluirGrupo(idGrupo) {
   if (!(await modalConfirm('Excluir este grupo? Os municípios voltarão a ficar sem cor.'))) return;
   grupos = grupos.filter((g) => g.id !== idGrupo);
-  municipioParaGrupo.forEach((v, k) => { if (v === idGrupo) municipioParaGrupo.delete(k); });
+  const afetados = [];
+  municipioParaGrupo.forEach((v, k) => {
+    if (v === idGrupo) {
+      afetados.push(k);
+      municipioParaGrupo.delete(k);
+    }
+  });
   renderizarListaGrupos();
-  repintarTodosMunicipios();
+  afetados.forEach((cod) => repintarMunicipio(cod));
   salvarProjeto();
   atualizarPaletaCoresUsadas();
 }
@@ -529,9 +612,9 @@ async function adicionarSelecionadosAoGrupo(idGrupo) {
   selecionados.forEach((cod) => {
     coresIndividuais.delete(cod); // grupo tem precedência sobre cor individual
     municipioParaGrupo.set(cod, idGrupo);
+    repintarMunicipio(cod);
   });
   renderizarListaGrupos();
-  repintarTodosMunicipios();
   salvarProjeto();
   atualizarPaletaCoresUsadas();
 }
@@ -540,17 +623,21 @@ async function adicionarSelecionadosAoGrupo(idGrupo) {
 // sem excluir o grupo em si.
 async function removerSelecionadosDosGrupos() {
   if (selecionados.size === 0) { await modalAlerta('Selecione ao menos um município.'); return; }
-  selecionados.forEach((cod) => municipioParaGrupo.delete(cod));
+  selecionados.forEach((cod) => {
+    municipioParaGrupo.delete(cod);
+    repintarMunicipio(cod);
+  });
   renderizarListaGrupos();
-  repintarTodosMunicipios();
   salvarProjeto();
   atualizarPaletaCoresUsadas();
 }
 
 function selecionarMunicipiosDoGrupo(idGrupo) {
+  const antigos = new Set(selecionados);
   selecionados.clear();
   municipioParaGrupo.forEach((v, k) => { if (v === idGrupo) selecionados.add(k); });
-  repintarTodosMunicipios();
+  antigos.forEach((cod) => repintarMunicipio(cod));
+  selecionados.forEach((cod) => repintarMunicipio(cod));
   atualizarPainelSelecao();
   ajustarVisaoParaSelecionados();
 }
@@ -559,7 +646,7 @@ function ajustarVisaoParaSelecionados() {
   const bounds = [];
   selecionados.forEach((cod) => {
     const m = municipiosPorCodigo.get(cod);
-    if (m) bounds.push(m.layer.getBounds());
+    if (m && !foraDoFiltro(m.feature)) bounds.push(m.layer.getBounds());
   });
   if (bounds.length === 0) return;
   let total = bounds[0];
@@ -569,21 +656,74 @@ function ajustarVisaoParaSelecionados() {
 
 function renderizarListaGrupos() {
   const ul = document.getElementById('lista-grupos');
+  if (!ul) return;
   ul.innerHTML = '';
   if (grupos.length === 0) {
     ul.innerHTML = '<li class="dica">Nenhum grupo criado.</li>';
     return;
   }
-  grupos.forEach((g) => {
-    const qtd = Array.from(municipioParaGrupo.values()).filter((v) => v === g.id).length;
+
+  const inputBusca = document.getElementById('busca-grupo');
+  const termoBusca = inputBusca ? normalizarTexto(inputBusca.value.trim()) : '';
+
+  // Filtra pelo nome se houver busca
+  const gruposFiltrados = grupos.filter((g) => {
+    if (!termoBusca) return true;
+    return normalizarTexto(g.nome).includes(termoBusca);
+  });
+
+  if (gruposFiltrados.length === 0) {
+    ul.innerHTML = `<li class="dica">Nenhum grupo encontrado com "${inputBusca.value.trim()}".</li>`;
+    return;
+  }
+
+  const temFiltroEstado = !!estadoFiltroAtual;
+  let nomeEstadoAtual = '';
+  if (temFiltroEstado) {
+    const sel = document.getElementById('filtro-estado');
+    nomeEstadoAtual = sel?.options[sel.selectedIndex]?.text || 'Estado selecionado';
+  }
+
+  // Mapeia contagem de municípios totais e dentro do estado filtrado
+  const gruposComContagem = gruposFiltrados.map((g) => {
+    let qtdTotal = 0;
+    let qtdNoEstado = 0;
+
+    municipioParaGrupo.forEach((idGrupo, cod) => {
+      if (idGrupo === g.id) {
+        qtdTotal++;
+        if (temFiltroEstado) {
+          const m = municipiosPorCodigo.get(cod);
+          if (m && m.feature.properties.uf_codigo === estadoFiltroAtual) {
+            qtdNoEstado++;
+          }
+        }
+      }
+    });
+
+    return { grupo: g, qtdTotal, qtdNoEstado };
+  });
+
+  function criarCardGrupo(item, ehNoEstado) {
+    const { grupo: g, qtdTotal, qtdNoEstado } = item;
     const li = document.createElement('li');
-    li.className = 'card-grupo';
+    li.className = `card-grupo ${ehNoEstado ? 'card-grupo-no-estado' : ''}`;
+
+    let textoContagem = `${qtdTotal} ${qtdTotal === 1 ? 'município' : 'municípios'}`;
+    if (temFiltroEstado) {
+      if (qtdNoEstado > 0) {
+        textoContagem = `<strong class="destaque-estado">${qtdNoEstado} no estado</strong> &bull; ${qtdTotal} no total`;
+      } else {
+        textoContagem = `<span class="fora-estado-texto">0 no estado (${qtdTotal} em outros estados)</span>`;
+      }
+    }
+
     li.innerHTML = `
       <div class="card-grupo-topo">
         <input type="color" class="input-cor-grupo" value="${g.cor}" title="Alterar cor do grupo" />
         <div class="card-grupo-info" title="Duplo clique para renomear">
           <span class="card-grupo-nome">${g.nome}</span>
-          <span class="card-grupo-contagem">${qtd} ${qtd === 1 ? 'município' : 'municípios'}</span>
+          <span class="card-grupo-contagem">${textoContagem}</span>
         </div>
       </div>
       <div class="card-grupo-acoes">
@@ -594,15 +734,20 @@ function renderizarListaGrupos() {
       </div>
     `;
 
-    // Alteração de cor do grupo em tempo real
+    // Alteração de cor do grupo em tempo real (repinta apenas os municípios deste grupo)
     const inputCor = li.querySelector('.input-cor-grupo');
+    const repintarMunicipiosDoGrupo = () => {
+      municipioParaGrupo.forEach((idGrupo, cod) => {
+        if (idGrupo === g.id) repintarMunicipio(cod);
+      });
+    };
     inputCor.addEventListener('input', (e) => {
       g.cor = e.target.value;
-      repintarTodosMunicipios();
+      repintarMunicipiosDoGrupo();
     });
     inputCor.addEventListener('change', (e) => {
       g.cor = e.target.value;
-      repintarTodosMunicipios();
+      repintarMunicipiosDoGrupo();
       salvarProjeto();
       atualizarPaletaCoresUsadas();
     });
@@ -622,8 +767,49 @@ function renderizarListaGrupos() {
     li.querySelector('[data-acao="adicionar"]').onclick = () => adicionarSelecionadosAoGrupo(g.id);
     li.querySelector('[data-acao="ir"]').onclick = () => selecionarMunicipiosDoGrupo(g.id);
     li.querySelector('[data-acao="excluir"]').onclick = () => excluirGrupo(g.id);
-    ul.appendChild(li);
-  });
+
+    return li;
+  }
+
+  if (temFiltroEstado) {
+    const noEstado = gruposComContagem.filter((item) => item.qtdNoEstado > 0);
+    const foraDoEstado = gruposComContagem.filter((item) => item.qtdNoEstado === 0);
+
+    // Seção 1: Grupos com municípios no estado filtrado
+    const divisorNoEstado = document.createElement('div');
+    divisorNoEstado.className = 'secao-grupos-titulo secao-grupos-estado';
+    divisorNoEstado.innerHTML = `
+      <span>📍 Grupos em ${nomeEstadoAtual}</span>
+      <span class="secao-grupos-badge">${noEstado.length}</span>
+    `;
+    ul.appendChild(divisorNoEstado);
+
+    if (noEstado.length === 0) {
+      const liVazio = document.createElement('li');
+      liVazio.className = 'dica';
+      liVazio.style.margin = '4px 0 10px 0';
+      liVazio.textContent = 'Nenhum grupo com municípios pintados neste estado.';
+      ul.appendChild(liVazio);
+    } else {
+      noEstado.forEach((item) => ul.appendChild(criarCardGrupo(item, true)));
+    }
+
+    // Seção 2: Outros grupos (fora do estado)
+    if (foraDoEstado.length > 0) {
+      const divisorOutros = document.createElement('div');
+      divisorOutros.className = 'secao-grupos-titulo secao-grupos-outros';
+      divisorOutros.innerHTML = `
+        <span>🌐 Outros Grupos (fora deste estado)</span>
+        <span class="secao-grupos-badge">${foraDoEstado.length}</span>
+      `;
+      ul.appendChild(divisorOutros);
+
+      foraDoEstado.forEach((item) => ul.appendChild(criarCardGrupo(item, false)));
+    }
+  } else {
+    // Sem filtro de estado: exibe todos normalmente
+    gruposComContagem.forEach((item) => ul.appendChild(criarCardGrupo(item, false)));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -659,16 +845,20 @@ function atualizarSelectMesorregioes() {
 function selecionarMesorregiao(mesoCodigo, acumular = false) {
   const codigos = municipiosPorMesorregiao.get(mesoCodigo);
   if (!codigos) return;
+  const antigos = acumular ? new Set() : new Set(selecionados);
   if (!acumular) {
     selecionados.clear();
   }
+  const novos = [];
   codigos.forEach((cod) => {
     const m = municipiosPorCodigo.get(cod);
     if (m && !foraDoFiltro(m.feature)) {
       selecionados.add(cod);
+      novos.push(cod);
     }
   });
-  repintarTodosMunicipios();
+  antigos.forEach((cod) => repintarMunicipio(cod));
+  novos.forEach((cod) => repintarMunicipio(cod));
   atualizarPainelSelecao();
   ajustarVisaoParaSelecionados();
 }
@@ -679,8 +869,8 @@ function pintarMesorregiao(mesoCodigo, cor) {
   codigos.forEach((cod) => {
     municipioParaGrupo.delete(cod);
     coresIndividuais.set(cod, cor);
+    repintarMunicipio(cod);
   });
-  repintarTodosMunicipios();
   salvarProjeto();
   atualizarPaletaCoresUsadas();
 }
@@ -773,6 +963,8 @@ function selecionarMunicipiosComMesmaCor(corAlvo) {
   if (!corAlvo) return;
   corAlvo = corAlvo.toLowerCase();
 
+  const antigos = new Set(selecionados);
+  selecionados.clear();
   let count = 0;
   municipiosPorCodigo.forEach((item, cod) => {
     if (foraDoFiltro(item.feature)) return;
@@ -792,7 +984,8 @@ function selecionarMunicipiosComMesmaCor(corAlvo) {
     return;
   }
 
-  repintarTodosMunicipios();
+  antigos.forEach((cod) => repintarMunicipio(cod));
+  selecionados.forEach((cod) => repintarMunicipio(cod));
   atualizarPainelSelecao();
   ajustarVisaoParaSelecionados();
 
@@ -1090,9 +1283,11 @@ function irParaMunicipio(codigo) {
   const m = municipiosPorCodigo.get(codigo);
   if (!m) return;
   mapa.fitBounds(m.layer.getBounds(), { maxZoom: 10, padding: [40, 40] });
+  const antigos = Array.from(selecionados);
   selecionados.clear();
   selecionados.add(codigo);
-  repintarTodosMunicipios();
+  antigos.forEach((c) => repintarMunicipio(c));
+  repintarMunicipio(codigo);
   atualizarPainelSelecao();
 }
 
@@ -1187,14 +1382,48 @@ function aplicarEstadoDoObjeto(obj, { limparSelecao = false } = {}) {
 function aplicarEstadoRemoto(remoto) {
   if (!remoto) return;
 
+  const paraRepintar = new Set();
+  const novoCoresIndividuais = new Map(Object.entries(remoto.coresIndividuais || {}));
+  const novoMunicipioParaGrupo = new Map(Object.entries(remoto.municipioParaGrupo || {}));
+  const novosGrupos = Array.isArray(remoto.grupos) ? remoto.grupos : [];
+
+  // Compara cores individuais
+  coresIndividuais.forEach((cor, cod) => {
+    if (novoCoresIndividuais.get(cod) !== cor) paraRepintar.add(cod);
+  });
+  novoCoresIndividuais.forEach((cor, cod) => {
+    if (coresIndividuais.get(cod) !== cor) paraRepintar.add(cod);
+  });
+
+  // Compara associação a grupos
+  municipioParaGrupo.forEach((gid, cod) => {
+    if (novoMunicipioParaGrupo.get(cod) !== gid) paraRepintar.add(cod);
+  });
+  novoMunicipioParaGrupo.forEach((gid, cod) => {
+    if (municipioParaGrupo.get(cod) !== gid) paraRepintar.add(cod);
+  });
+
+  // Compara cor dos grupos
+  grupos.forEach((g) => {
+    const ng = novosGrupos.find((item) => item.id === g.id);
+    if (ng && ng.cor !== g.cor) {
+      municipioParaGrupo.forEach((gid, cod) => {
+        if (gid === g.id) paraRepintar.add(cod);
+      });
+      novoMunicipioParaGrupo.forEach((gid, cod) => {
+        if (gid === g.id) paraRepintar.add(cod);
+      });
+    }
+  });
+
   // 1. Atualiza cores individuais
-  coresIndividuais = new Map(Object.entries(remoto.coresIndividuais || {}));
+  coresIndividuais = novoCoresIndividuais;
 
   // 2. Atualiza municípios pertencentes a grupos
-  municipioParaGrupo = new Map(Object.entries(remoto.municipioParaGrupo || {}));
+  municipioParaGrupo = novoMunicipioParaGrupo;
 
   // 3. Atualiza grupos
-  grupos = Array.isArray(remoto.grupos) ? remoto.grupos : [];
+  grupos = novosGrupos;
 
   // 4. Sincronização inteligente de rotas (preserva linhaRotaTemp da rota em andamento do usuário)
   const rotasRemotas = Array.isArray(remoto.rotas) ? remoto.rotas : [];
@@ -1290,15 +1519,17 @@ function aplicarEstadoRemoto(remoto) {
     }
   });
 
-  // 7. Atualiza listas do painel lateral
+  // 7. Atualiza visibilidade de itens conforme filtro de estado
+  atualizarVisibilidadeItensUsuario();
+
+  // 8. Atualiza listas do painel lateral
   renderizarListaGrupos();
   renderizarListaRotas();
   renderizarListaMarcadores();
   renderizarListaTextos();
 
-  // 8. Repinta municípios com as novas cores/grupos, MANTENDO o contorno tracejado
-  // dos municípios que o usuário local tem selecionados!
-  repintarTodosMunicipios();
+  // 9. Repinta apenas os municípios que sofreram alteração
+  paraRepintar.forEach((cod) => repintarMunicipio(cod));
   atualizarPainelSelecao();
   atualizarPaletaCoresUsadas();
 }
@@ -1439,6 +1670,7 @@ function aplicarVisibilidadeCamadas() {
   if (!mapa.hasLayer(camadaMunicipios)) {
     mapa.addLayer(camadaMunicipios);
   }
+  atualizarRotulosVisiveis();
   repintarTodosMunicipios();
 }
 
@@ -1459,8 +1691,18 @@ document.getElementById('filtro-estado').addEventListener('change', (e) => {
   repintarTodosMunicipios();
   camadaEstadosGeo.setStyle(estiloEstado);
   camadaMesorregioesGeo.setStyle(estiloMesorregiao);
+  atualizarRotulosVisiveis();
+  atualizarVisibilidadeItensUsuario();
   atualizarSelectMesorregioes();
+  renderizarListaGrupos();
 });
+
+const inputBuscaGrupo = document.getElementById('busca-grupo');
+if (inputBuscaGrupo) {
+  inputBuscaGrupo.addEventListener('input', () => {
+    renderizarListaGrupos();
+  });
+}
 
 // ---------------------------------------------------------------------------
 // Multi-seleção "pintando" com Shift + cursor do mouse

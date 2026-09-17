@@ -474,6 +474,79 @@ ul#lista-grupos, ul#lista-rotas, ul#lista-marcadores, ul#lista-textos {
   border-color: #fca5a5 !important;
 }
 
+/* Busca de Grupos por Nome */
+.bloco-busca-grupo {
+  margin: 10px 0 6px 0;
+}
+
+.input-busca-grupo {
+  width: 100%;
+  padding: 7px 10px;
+  font-size: 12px;
+  border: 1px solid var(--cor-borda);
+  border-radius: 6px;
+  background-color: #ffffff;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.input-busca-grupo:focus {
+  border-color: var(--cor-primaria);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.15);
+}
+
+/* Divisores de Seção de Grupos por Estado */
+.secao-grupos-titulo {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #334155;
+  background: #f1f5f9;
+  padding: 6px 10px;
+  border-radius: 6px;
+  margin: 12px 0 8px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-left: 3px solid var(--cor-primaria);
+}
+
+.secao-grupos-titulo.secao-grupos-outros {
+  border-left-color: #94a3b8;
+  color: #64748b;
+  background: #f8fafc;
+}
+
+.secao-grupos-badge {
+  font-size: 10px;
+  background: #e2e8f0;
+  color: #1e293b;
+  padding: 2px 7px;
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+.card-grupo-no-estado {
+  border-color: #bfdbfe;
+  background: #fbfdff;
+}
+
+.card-grupo-no-estado:hover {
+  border-color: #93c5fd;
+}
+
+.destaque-estado {
+  color: #1d4ed8;
+  font-weight: 600;
+}
+
+.fora-estado-texto {
+  color: #94a3b8;
+  font-style: italic;
+}
+
 /* Bloco de Ações Rápidas por Mesorregião */
 .bloco-acao-rapida {
   background: #ffffff;

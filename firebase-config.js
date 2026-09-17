@@ -19,7 +19,8 @@ import {
   onValue,
   onDisconnect,
   serverTimestamp,
-  off
+  off,
+  runTransaction
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-database.js";
 
 export const firebaseConfig = {
@@ -54,5 +55,6 @@ export {
   onValue,
   onDisconnect,
   serverTimestamp,
-  off
+  off,
+  runTransaction
 };
