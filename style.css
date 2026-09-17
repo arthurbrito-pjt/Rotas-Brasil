@@ -40,7 +40,8 @@ html, body {
   padding: 0 16px;
   background: #ffffff;
   border-bottom: 1px solid var(--cor-borda);
-  z-index: 20;
+  position: relative;
+  z-index: 1500;
 }
 
 #topbar h1 {
@@ -73,37 +74,80 @@ html, body {
 
 #busca-container {
   position: relative;
-  width: 240px;
+  width: 250px;
 }
 
 #busca-input {
   width: 100%;
-  padding: 7px 10px;
+  padding: 7px 12px;
   border: 1px solid var(--cor-borda);
   border-radius: 6px;
   font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+#busca-input:focus {
+  border-color: var(--cor-primaria);
+  box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.15);
 }
 
 #busca-resultados {
   position: absolute;
-  top: 36px;
+  top: calc(100% + 4px);
   left: 0;
-  right: 0;
-  max-height: 260px;
+  min-width: 280px;
+  width: 100%;
+  max-height: 280px;
   overflow-y: auto;
   background: #fff;
   border: 1px solid var(--cor-borda);
-  border-radius: 6px;
-  box-shadow: 0 6px 18px rgba(0,0,0,0.12);
-  z-index: 30;
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.15);
+  z-index: 2000;
 }
 
-#busca-resultados div {
-  padding: 8px 10px;
+.item-busca-mun {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
   font-size: 13px;
   cursor: pointer;
+  border-bottom: 1px solid #f1f3f5;
+  transition: background 0.1s;
 }
-#busca-resultados div:hover { background: var(--cor-fundo-painel); }
+
+.item-busca-mun:last-child {
+  border-bottom: none;
+}
+
+.item-busca-mun:hover,
+.item-busca-mun.ativo-teclado {
+  background: #eef4ff;
+  color: var(--cor-primaria-escura);
+}
+
+.item-busca-mun .mun-uf-badge {
+  display: inline-block;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: #f1f3f5;
+  color: var(--cor-texto-suave);
+}
+
+.item-busca-mun:hover .mun-uf-badge,
+.item-busca-mun.ativo-teclado .mun-uf-badge {
+  background: #dbeafe;
+  color: var(--cor-primaria-escura);
+}
+
+.item-busca-mun .mun-no-estado-badge {
+  background: #ecfdf5;
+  color: #059669;
+}
 
 /* ---------- Corpo ---------- */
 #corpo {

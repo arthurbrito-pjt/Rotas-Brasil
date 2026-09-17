@@ -218,9 +218,9 @@ function estiloMunicipio(feature) {
       weight: 2.5,
       dashArray: '5,3',
       opacity: 1,
-      fill: temCor,
-      fillColor: cor || '#ffffff',
-      fillOpacity: 1,
+      fill: true,
+      fillColor: cor || '#cfe2ff',
+      fillOpacity: cor ? 1 : 0.75,
     };
   }
 
@@ -425,7 +425,9 @@ async function carregarCamadas() {
     codigo: m.feature.properties.codigo,
     nome: m.nome,
     uf_sigla: m.uf_sigla,
-    normalizado: normalizarTexto(`${m.nome} ${m.uf_sigla}`),
+    uf_codigo: m.feature.properties.uf_codigo,
+    normalizadoNome: normalizarTexto(m.nome),
+    normalizadoCompleto: normalizarTexto(`${m.nome} ${m.uf_sigla} ${m.feature.properties.codigo}`),
   }));
 
   // --- Mesorregiões (contorno laranja tracejado, apenas visual) -----------
@@ -1316,39 +1318,180 @@ function renderizarListaTextos() {
 
 const buscaInput = document.getElementById('busca-input');
 const buscaResultados = document.getElementById('busca-resultados');
+let indiceResultadoAtivo = -1;
+let resultadosAtuaisBusca = [];
 
-buscaInput.addEventListener('input', () => {
-  const termo = normalizarTexto(buscaInput.value.trim());
-  if (termo.length < 2) { buscaResultados.classList.add('oculto'); buscaResultados.innerHTML = ''; return; }
-  const resultados = listaBuscaMunicipios.filter((m) => m.normalizado.includes(termo)).slice(0, 20);
-  if (resultados.length === 0) {
-    buscaResultados.innerHTML = '<div class="dica" style="padding:8px;">Nenhum município encontrado.</div>';
+function filtrarResultadosBusca(termoBruto) {
+  const termo = normalizarTexto(termoBruto.trim());
+  if (!termo) return [];
+
+  const filtrados = listaBuscaMunicipios.filter(
+    (m) => m.normalizadoCompleto.includes(termo) || m.codigo === termo
+  );
+
+  // Ordenação inteligente:
+  // 1. Municípios do estado atualmente filtrado vêm primeiro
+  // 2. Municípios cujo nome começa com o termo digitado vêm antes
+  // 3. Ordem alfabética
+  return filtrados
+    .sort((a, b) => {
+      if (estadoFiltroAtual) {
+        const aNoEstado = a.uf_codigo === estadoFiltroAtual;
+        const bNoEstado = b.uf_codigo === estadoFiltroAtual;
+        if (aNoEstado && !bNoEstado) return -1;
+        if (!aNoEstado && bNoEstado) return 1;
+      }
+      const aComeca = a.normalizadoNome.startsWith(termo);
+      const bComeca = b.normalizadoNome.startsWith(termo);
+      if (aComeca && !bComeca) return -1;
+      if (!aComeca && bComeca) return 1;
+      return a.nome.localeCompare(b.nome, 'pt-BR');
+    })
+    .slice(0, 25);
+}
+
+function renderizarResultadosBusca() {
+  const termo = buscaInput.value.trim();
+  if (termo.length < 1) {
+    buscaResultados.classList.add('oculto');
+    buscaResultados.innerHTML = '';
+    resultadosAtuaisBusca = [];
+    indiceResultadoAtivo = -1;
+    return;
+  }
+
+  resultadosAtuaisBusca = filtrarResultadosBusca(termo);
+  indiceResultadoAtivo = -1;
+
+  if (resultadosAtuaisBusca.length === 0) {
+    buscaResultados.innerHTML = `<div class="dica" style="padding:10px 12px; margin:0;">Nenhum município encontrado com "${termo}".</div>`;
   } else {
-    buscaResultados.innerHTML = resultados
-      .map((m) => `<div data-codigo="${m.codigo}">${m.nome} — ${m.uf_sigla}</div>`)
+    buscaResultados.innerHTML = resultadosAtuaisBusca
+      .map((m, idx) => {
+        const ehNoEstado = estadoFiltroAtual && m.uf_codigo === estadoFiltroAtual;
+        const badgeExtra = ehNoEstado ? ' mun-no-estado-badge' : '';
+        return `
+          <div class="item-busca-mun" data-idx="${idx}" data-codigo="${m.codigo}">
+            <span class="mun-nome">${m.nome}</span>
+            <span class="mun-uf-badge${badgeExtra}">${m.uf_sigla}</span>
+          </div>
+        `;
+      })
       .join('');
-    buscaResultados.querySelectorAll('div[data-codigo]').forEach((div) => {
+
+    buscaResultados.querySelectorAll('.item-busca-mun').forEach((div) => {
       div.addEventListener('click', () => {
         const cod = div.getAttribute('data-codigo');
-        irParaMunicipio(cod);
-        buscaResultados.classList.add('oculto');
-        buscaInput.value = '';
+        selecionarResultadoBusca(cod);
       });
     });
   }
   buscaResultados.classList.remove('oculto');
+}
+
+function selecionarResultadoBusca(codigo) {
+  const mun = listaBuscaMunicipios.find((item) => item.codigo === codigo);
+  if (mun) {
+    buscaInput.value = `${mun.nome} — ${mun.uf_sigla}`;
+  }
+  buscaResultados.classList.add('oculto');
+  buscaResultados.innerHTML = '';
+  resultadosAtuaisBusca = [];
+  indiceResultadoAtivo = -1;
+  irParaMunicipio(codigo);
+}
+
+buscaInput.addEventListener('input', () => {
+  renderizarResultadosBusca();
+});
+
+buscaInput.addEventListener('focus', () => {
+  if (buscaInput.value.trim().length >= 1) {
+    renderizarResultadosBusca();
+  }
+});
+
+buscaInput.addEventListener('keydown', (e) => {
+  if (resultadosAtuaisBusca.length === 0) {
+    if (e.key === 'Enter') {
+      renderizarResultadosBusca();
+    }
+    return;
+  }
+
+  const itens = buscaResultados.querySelectorAll('.item-busca-mun');
+
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    indiceResultadoAtivo = (indiceResultadoAtivo + 1) % itens.length;
+    itens.forEach((el, idx) => el.classList.toggle('ativo-teclado', idx === indiceResultadoAtivo));
+    itens[indiceResultadoAtivo]?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    indiceResultadoAtivo = (indiceResultadoAtivo - 1 + itens.length) % itens.length;
+    itens.forEach((el, idx) => el.classList.toggle('ativo-teclado', idx === indiceResultadoAtivo));
+    itens[indiceResultadoAtivo]?.scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const escolhido = indiceResultadoAtivo >= 0 ? resultadosAtuaisBusca[indiceResultadoAtivo] : resultadosAtuaisBusca[0];
+    if (escolhido) {
+      selecionarResultadoBusca(escolhido.codigo);
+      buscaInput.blur();
+    }
+  } else if (e.key === 'Escape') {
+    buscaResultados.classList.add('oculto');
+    indiceResultadoAtivo = -1;
+  }
+});
+
+document.addEventListener('click', (e) => {
+  const container = document.getElementById('busca-container');
+  if (container && !container.contains(e.target)) {
+    buscaResultados.classList.add('oculto');
+  }
 });
 
 function irParaMunicipio(codigo) {
   const m = municipiosPorCodigo.get(codigo);
   if (!m) return;
+
+  // Se houver um filtro de estado ativo e o município pertencer a outro estado,
+  // atualiza automaticamente o seletor para o estado do município para que ele e seus limites fiquem 100% visíveis!
+  const ufCodigoMun = m.feature.properties.uf_codigo;
+  if (estadoFiltroAtual && ufCodigoMun !== estadoFiltroAtual) {
+    const selEstado = document.getElementById('filtro-estado');
+    if (selEstado) selEstado.value = ufCodigoMun;
+    estadoFiltroAtual = ufCodigoMun;
+    repintarTodosMunicipios();
+    if (camadaEstadosGeo) camadaEstadosGeo.setStyle(estiloEstado);
+    if (camadaMesorregioesGeo) camadaMesorregioesGeo.setStyle(estiloMesorregiao);
+    atualizarRotulosVisiveis();
+    atualizarVisibilidadeItensUsuario();
+    atualizarSelectMesorregioes();
+    renderizarListaGrupos();
+  }
+
+  // Atualiza seletor de mesorregião se o município pertencer a uma
+  if (m.feature.properties.meso_codigo) {
+    const selectMeso = document.getElementById('select-mesorregiao');
+    if (selectMeso) selectMeso.value = m.feature.properties.meso_codigo;
+  }
+
+  // Centraliza e ajusta o zoom no município
   mapa.fitBounds(m.layer.getBounds(), { maxZoom: 10, padding: [40, 40] });
+
+  // Seleciona o município encontrado
   const antigos = Array.from(selecionados);
   selecionados.clear();
   selecionados.add(codigo);
   antigos.forEach((c) => repintarMunicipio(c));
   repintarMunicipio(codigo);
   atualizarPainelSelecao();
+
+  // Abre tooltip com nome do município para feedback visual imediato
+  if (m.layer && typeof m.layer.openTooltip === 'function') {
+    m.layer.openTooltip();
+  }
 }
 
 // ---------------------------------------------------------------------------
